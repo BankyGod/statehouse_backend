@@ -74,6 +74,8 @@ def character_payload(character) -> dict:
     return {
         "id": character.id,
         "display_name": character.display_name,
+        "home_state_id": character.home_state_id,
+        "current_state_id": character.current_state_id,
         "cash": character.cash,
         "bank_balance": character.bank_balance,
         "energy": character.energy,
@@ -91,11 +93,14 @@ def character_payload(character) -> dict:
         "hospital_until": _iso(character.hospital_until),
         "is_traveling": character.is_traveling,
         "travel_until": _iso(character.travel_until),
-        "current_state_id": character.current_state_id,
+        "travel_destination_id": character.travel_destination_id,
+        "is_homeless": character.is_homeless,
+        "active_residence_id": character.active_residence_id,
         "strength": getattr(character, "strength", 10.0),
         "defense": getattr(character, "defense", 10.0),
         "speed": getattr(character, "speed", 10.0),
         "dexterity": getattr(character, "dexterity", 10.0),
+        "faction_id": getattr(character, "faction_id", None),
     }
 
 

@@ -12,6 +12,7 @@ from app.seed.states_data import STATES
 from app.services import (
     cabinet_service,
     legislation_service,
+    living_world_service,
     news_service,
     politics_service,
     stock_service,
@@ -127,7 +128,13 @@ async def seed_news_and_budget(db: AsyncSession) -> dict[str, int]:
             "Until players win seats, NPC MPs hold the 20 constituencies. Majority is 11.",
             category="politics",
         )
-        news_count = 2
+        await news_service.publish(
+            db,
+            "Five parties open membership rolls",
+            "UPA, NPP, APU, GHM, and CCP welcome citizens. Civil service posts remain NPC-staffed until players apply.",
+            category="politics",
+        )
+        news_count = 3
 
     budget = await legislation_service.get_current_budget(db)
     budget_count = 1 if budget else 0
@@ -136,6 +143,18 @@ async def seed_news_and_budget(db: AsyncSession) -> dict[str, int]:
 
 async def seed_cabinet(db: AsyncSession) -> int:
     return await cabinet_service.ensure_cabinet_seeded(db)
+
+
+async def seed_living_world(db: AsyncSession) -> dict:
+    """NPC president/VP/speaker, parties, civil service, fill gaps."""
+    return await living_world_service.ensure_living_government(db)
+
+
+async def seed_npc_citizens(db: AsyncSession) -> dict:
+    """Automated citizens that populate states and act like players."""
+    from app.services import npc_sim_service
+
+    return await npc_sim_service.ensure_npc_citizens(db)
 
 
 async def seed_stocks(db: AsyncSession) -> int:
@@ -160,6 +179,8 @@ async def run_seed(db: AsyncSession) -> dict:
     housing = await seed_housing(db)
     politics = await seed_politics(db)
     cabinet = await seed_cabinet(db)
+    living = await seed_living_world(db)
+    npc_citizens = await seed_npc_citizens(db)
     stocks = await seed_stocks(db)
     extra = await seed_news_and_budget(db)
     events = await seed_events(db)
@@ -170,6 +191,8 @@ async def run_seed(db: AsyncSession) -> dict:
         "housing": housing,
         "politics": politics,
         "cabinet": cabinet,
+        "living_world": living,
+        "npc_citizens": npc_citizens,
         "stocks": stocks,
         "events": events,
         "mogul": mogul,

@@ -106,5 +106,14 @@ class NationOffice(Base, TimestampMixin):
     president_npc_name: Mapped[str] = mapped_column(
         String(128), default="President Ama Serwaa (NPC)"
     )
+    vice_president_character_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    vice_president_npc_name: Mapped[str] = mapped_column(
+        String(128), default="Vice President Kwesi Nkrumah (NPC)"
+    )
     speaker_character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speaker_npc_name: Mapped[str] = mapped_column(
+        String(128), default="Speaker Ruth Mensah (NPC)"
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

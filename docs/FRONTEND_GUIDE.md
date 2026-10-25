@@ -130,18 +130,20 @@ Torn-style: top bar with cash / energy / age / heat, plus notifications.
 16. **Newspaper** — national/state headlines from elections, bills, budgets  
 17. **Cabinet** — 10 ministries; president appoints MPs; weekly minister salary  
 18. **State chat** — per-state channels; home or current state; rate-limited  
+19. **Political parties** — 5 joinable parties with NPC leaders & members  
+20. **Civil service** — government posts NPC-staffed until players apply  
 
 ### Also built (life loop depth)
 
-19. **Business ops** — revenue every ~6h from staff, weekly payroll, deposit/withdraw (no withdraw if public)  
-20. **Employees** — hire NPCs or players; player wages paid on payroll  
-21. **Activity + notifications feed** — `/api/activities/me`, `/api/activities/notifications`  
-22. **Gym** — train strength/defense/speed/dexterity for energy  
-23. **Nerve + deeper crime** — tiers, nerve cost/regen, history, loot drops  
-24. **Inventory + player market** — shop, use items, list/buy peer listings  
-25. **Jail bail** — `/api/jail/me`, `/api/jail/bail` (+ hospital `seconds_remaining`)  
-26. **Social** — friends/enemies, attacks, DMs, factions, world events  
-27. **Peer stock orders** — place/fill sell orders between players  
+21. **Business ops** — revenue every ~6h from staff, weekly payroll, deposit/withdraw (no withdraw if public)  
+22. **Employees** — hire NPCs or players; player wages paid on payroll  
+23. **Activity + notifications feed** — `/api/activities/me`, `/api/activities/notifications`  
+24. **Gym** — train strength/defense/speed/dexterity for energy  
+25. **Nerve + deeper crime** — tiers, nerve cost/regen, history, loot drops  
+26. **Inventory + player market** — shop, use items, list/buy peer listings  
+27. **Jail bail** — `/api/jail/me`, `/api/jail/bail` (+ hospital `seconds_remaining`)  
+28. **Social** — friends/enemies, attacks, DMs, factions, world events  
+29. **Peer stock orders** — place/fill sell orders between players  
 
 **Realtime:** Socket.IO at `/socket.io` (see §18). Prefer sockets over polling for feed, HUD, and chat.
 
@@ -207,7 +209,10 @@ Optional disabled stubs:
 /travel
 /bank
 /housing
-/politics
+/politics               → Parliament (prez/VP/speaker + 20 MPs)
+/parties                → Join a political party
+/government             → Civil service jobs (take NPC posts)
+/cabinet                → Ministries roster
 ```
 
 ---
@@ -290,7 +295,7 @@ Common cases to handle in UI:
 
 ### Refresh rule
 
-After every mutating action (`work`, `commit`, `enroll`, `hire`, `apply`, register business), refetch:
+After mutating actions, **patch HUD from the response / Socket.IO `character` event** — do **not** remount the app or show a full-screen loader. Soft-invalidate in the background only:
 
 - `GET /api/characters/me`
 
@@ -453,7 +458,7 @@ Politics (optional path):
 
 | Method | Path |
 |---|---|
-| GET | `/api/politics/parliament` | 20 seats + president (NPC or player) |
+| GET | `/api/politics/parliament` | 20 seats + president, VP, speaker (NPC or player) |
 | GET | `/api/politics/elections/current` | status + timers |
 | GET | `/api/politics/elections/{id}/candidates?race_type=&state_id=` |
 | POST | `/api/politics/elections/{id}/run` | `{ race_type: "mp"\|"president", slogan }` |
@@ -491,6 +496,14 @@ Cabinet:
 | POST | `/api/cabinet/appoint` | `{ portfolio, character_id }` president only |
 | POST | `/api/cabinet/dismiss` | `{ portfolio }` president only |
 | POST | `/api/cabinet/resign` | leave your post |
+| GET | `/api/parties` | 5 political parties (NPC leaders + member counts) |
+| GET | `/api/parties/me` | your membership or null |
+| POST | `/api/parties/join` | `{ party_id }` — switches if already in another |
+| POST | `/api/parties/leave` | leave current party |
+| GET | `/api/government/posts` | civil service jobs (`?open_only=true` = NPC-held takeovers) |
+| GET | `/api/government/me` | your government post or null |
+| POST | `/api/government/apply` | `{ post_id }` — replace NPC worker |
+| POST | `/api/government/resign` | NPC caretaker returns |
 
 Portfolios: `finance`, `defence`, `health`, `education`, `interior`, `trade`, `justice`, `agriculture`, `energy`, `transport`.  
 By default ministers must be **sitting MPs**. Weekly salary `$400` (config).
@@ -739,3 +752,38 @@ socket.emit("join_state", { state_id: 3 }, (ack) => {});
 | `ping_hud` | client → server | tick + emit `character` |
 
 Auth: JWT in `auth.token`. Server joins `character:{id}`, `user:{id}`, home/current `state:{id}` rooms. REST feeds remain for history / reconnect catch-up.
+
+---
+
+## 19. Living world — NPC citizens + government
+
+### NPC citizens (automated players)
+
+Each state seeds ~14+ real `Character` rows (`is_npc: true`) that **work jobs, chat, travel, gym, bank, and occasionally crime** on a background loop (~18s). They:
+
+- Count toward **`population_count` on state list cards** (players + NPCs)
+- Do **not** fill the player cap / close states (`player_population` + `is_open` still player-only)
+- Appear in **state chat** via Socket.IO `chat:message` like humans
+
+| Field | Meaning |
+|---|---|
+| `population_count` (list) | Total citizens shown (players + NPCs) |
+| `player_population` | Real players only |
+| `npc_population_count` | Automated citizens |
+| `population_total` (detail) | Same as players + NPCs |
+
+Toggle: `NPC_SIM_ENABLED=true` (default). Tune `NPC_PER_STATE`, `NPC_SIM_INTERVAL_SECONDS`, `NPC_SIM_BATCH_SIZE`.
+
+### Living government (NPCs until players take over)
+
+Even with few real players, United Amir feels staffed:
+
+| Role | Source | Player takeover |
+|---|---|---|
+| President / VP / Speaker | `GET /api/politics/parliament` | Win presidential race (VP/speaker via appointments later) |
+| 10 ministers | `GET /api/cabinet` | President appoints players; else NPC names |
+| 20 MPs | parliament `seats[]` | Win MP race in a state |
+| 5 parties | `GET /api/parties` | Join anytime; NPC leaders + thousands of NPC members |
+| Civil service | `GET /api/government/posts` | `POST /apply` displaces NPC worker; weekly wage on tick |
+
+**UX tips:** show NPC badges on empty offices; list `open_only` government posts on a Careers → Civil Service screen; party colours from `color_hex`; parliament header should show president + VP + speaker together.

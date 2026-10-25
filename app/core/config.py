@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     chat_max_length: int = 280
     chat_cooldown_seconds: int = 10
 
+    # Automated NPC citizens (populate states + act like players)
+    npc_sim_enabled: bool = True
+    npc_per_state: int = 14
+    npc_sim_interval_seconds: float = 18.0
+    npc_sim_batch_size: int = 10
+
     # Nerve / gym / combat
     nerve_regen_minutes: int = 8
     gym_energy_cost: int = 5

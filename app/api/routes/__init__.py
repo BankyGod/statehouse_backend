@@ -10,6 +10,7 @@ from app.api.routes import (
     chat,
     crime,
     education,
+    government,
     gym,
     housing,
     inventory,
@@ -18,6 +19,7 @@ from app.api.routes import (
     legislation,
     medical,
     news,
+    parties,
     permits,
     politics,
     social,
@@ -43,6 +45,8 @@ api_router.include_router(politics.router)
 api_router.include_router(legislation.router)
 api_router.include_router(news.router)
 api_router.include_router(cabinet.router)
+api_router.include_router(parties.router)
+api_router.include_router(government.router)
 api_router.include_router(chat.router)
 api_router.include_router(stocks.router)
 api_router.include_router(activities.router)

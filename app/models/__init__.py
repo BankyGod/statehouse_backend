@@ -14,6 +14,8 @@ from app.models.legislation import Bill, BillVote, BudgetReading, BudgetVote, Ne
 from app.models.loan import Loan
 from app.models.medical import MedicalVisit
 from app.models.permit import Permit
+from app.models.government import GovernmentPost
+from app.models.party import PartyMembership, PoliticalParty
 from app.models.politics import Ballot, Candidacy, Election, NationOffice
 from app.models.social import (
     AttackLog,
@@ -57,6 +59,9 @@ __all__ = [
     "BudgetVote",
     "NewsItem",
     "CabinetSeat",
+    "PoliticalParty",
+    "PartyMembership",
+    "GovernmentPost",
     "ChatMessage",
     "BankTransaction",
     "StockListing",

@@ -15,7 +15,10 @@ class State(Base, TimestampMixin):
     economic_profile: Mapped[str] = mapped_column(Text)
     # Soft population management
     population_cap: Mapped[int] = mapped_column(Integer, default=500)
+    # Real player home-state residents (used for is_open / cap)
     population_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Automated NPC citizens (display + sim; do not close states)
+    npc_population_count: Mapped[int] = mapped_column(Integer, default=0)
     # Economy flavour knobs
     base_tax_rate: Mapped[float] = mapped_column(Float, default=0.08)
     permit_fee_multiplier: Mapped[float] = mapped_column(Float, default=1.0)

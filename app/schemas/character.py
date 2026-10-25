@@ -44,6 +44,7 @@ class CharacterOut(BaseModel):
     nerve: int = 20
     max_nerve: int = 20
     faction_id: int | None = None
+    is_npc: bool = False
 
     model_config = {"from_attributes": True}
 

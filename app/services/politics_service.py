@@ -21,9 +21,26 @@ from app.services.character_service import ensure_can_act
 async def get_or_create_nation(db: AsyncSession) -> NationOffice:
     nation = await db.get(NationOffice, 1)
     if nation is None:
-        nation = NationOffice(id=1)
+        nation = NationOffice(
+            id=1,
+            president_npc_name="President Ama Serwaa (NPC)",
+            vice_president_npc_name="Vice President Kwesi Nkrumah (NPC)",
+            speaker_npc_name="Speaker Ruth Mensah (NPC)",
+        )
         db.add(nation)
         await db.flush()
+        return nation
+    # Backfill NPC labels if columns were added later
+    if not nation.president_character_id and not nation.president_npc_name:
+        nation.president_npc_name = "President Ama Serwaa (NPC)"
+    if not getattr(nation, "vice_president_character_id", None) and not getattr(
+        nation, "vice_president_npc_name", None
+    ):
+        nation.vice_president_npc_name = "Vice President Kwesi Nkrumah (NPC)"
+    if not nation.speaker_character_id and not getattr(
+        nation, "speaker_npc_name", None
+    ):
+        nation.speaker_npc_name = "Speaker Ruth Mensah (NPC)"
     return nation
 
 
@@ -97,6 +114,23 @@ async def parliament(db: AsyncSession) -> dict:
             president_name = prez.display_name
             president_is_npc = False
 
+    vp_name = getattr(nation, "vice_president_npc_name", None) or "Vice President (NPC)"
+    vp_is_npc = True
+    vp_id = getattr(nation, "vice_president_character_id", None)
+    if vp_id:
+        vp = await db.get(Character, vp_id)
+        if vp:
+            vp_name = vp.display_name
+            vp_is_npc = False
+
+    speaker_name = getattr(nation, "speaker_npc_name", None) or "Speaker (NPC)"
+    speaker_is_npc = True
+    if nation.speaker_character_id:
+        sp = await db.get(Character, nation.speaker_character_id)
+        if sp:
+            speaker_name = sp.display_name
+            speaker_is_npc = False
+
     return {
         "seats": seats,
         "majority_needed": 11,
@@ -106,7 +140,16 @@ async def parliament(db: AsyncSession) -> dict:
             "character_id": nation.president_character_id,
             "is_npc": president_is_npc,
         },
-        "speaker_character_id": nation.speaker_character_id,
+        "vice_president": {
+            "name": vp_name,
+            "character_id": vp_id,
+            "is_npc": vp_is_npc,
+        },
+        "speaker": {
+            "name": speaker_name,
+            "character_id": nation.speaker_character_id,
+            "is_npc": speaker_is_npc,
+        },
     }
 
 

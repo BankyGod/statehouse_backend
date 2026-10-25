@@ -96,6 +96,12 @@ class Character(Base, TimestampMixin):
     # Faction
     faction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Automated citizens (same rules as players; driven by npc_sim_service)
+    is_npc: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    npc_next_action_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     user: Mapped["User"] = relationship(back_populates="character")  # noqa: F821
     home_state: Mapped["State"] = relationship(  # noqa: F821
         foreign_keys=[home_state_id],

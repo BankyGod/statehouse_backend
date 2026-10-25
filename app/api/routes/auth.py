@@ -54,6 +54,11 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
+    if getattr(user, "is_bot", False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+        )
     user.last_login_at = utcnow()
     token = create_access_token(user.id, extra={"username": user.username})
     return TokenResponse(access_token=token)

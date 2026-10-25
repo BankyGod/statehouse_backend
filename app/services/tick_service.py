@@ -1,6 +1,6 @@
 """Apply passive updates whenever a character is loaded."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,19 +138,45 @@ def ensure_not_traveling(character: Character) -> None:
         )
 
 
+# World systems (elections, bills, payroll) — at most once per minute per process
+_last_world_tick_at: datetime | None = None
+_WORLD_TICK_INTERVAL_SEC = 60
+
+
+async def tick_world_if_due(db: AsyncSession) -> None:
+    """Heavy shared systems — throttled so /characters/me stays snappy."""
+    global _last_world_tick_at
+    from app.services import (
+        cabinet_service,
+        government_service,
+        legislation_service,
+        politics_service,
+    )
+
+    now = utcnow()
+    if (
+        _last_world_tick_at is not None
+        and (now - _last_world_tick_at).total_seconds() < _WORLD_TICK_INTERVAL_SEC
+    ):
+        return
+    _last_world_tick_at = now
+    await politics_service.advance_election_phases(db)
+    await legislation_service.resolve_due_bills(db)
+    await legislation_service.resolve_due_budgets(db)
+    await cabinet_service.pay_minister_salaries(db)
+    await government_service.pay_gov_salaries(db)
+
+
 async def tick_character(db: AsyncSession, character: Character) -> Character:
     """Jail release, regen, heat decay, travel/education/business completion."""
     # Local imports avoid circular dependency with character_service
     from app.services import (
         bank_service,
         business_service,
-        cabinet_service,
         crime_service,
         education_service,
         health_service,
         housing_service,
-        legislation_service,
-        politics_service,
     )
 
     now = utcnow()
@@ -183,16 +209,15 @@ async def tick_character(db: AsyncSession, character: Character) -> Character:
     await business_service.activate_due_businesses(db, character)
     await business_service.process_business_ops(db, character)
     await housing_service.process_rent(db, character)
-    await politics_service.advance_election_phases(db)
-    await legislation_service.resolve_due_bills(db)
-    await legislation_service.resolve_due_budgets(db)
-    await cabinet_service.pay_minister_salaries(db)
+    await tick_world_if_due(db)
     await bank_service.apply_savings_interest(db, character)
     await db.flush()
-    try:
-        from app.realtime import emit_character
+    # Don't spam sockets for automated citizens (no client in their room)
+    if not getattr(character, "is_npc", False):
+        try:
+            from app.realtime import emit_character
 
-        await emit_character(character)
-    except Exception:
-        pass
+            await emit_character(character)
+        except Exception:
+            pass
     return character

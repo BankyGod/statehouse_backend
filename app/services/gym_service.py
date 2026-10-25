@@ -67,7 +67,7 @@ async def train(db: AsyncSession, character: Character, stat: str) -> dict:
         character.id,
         ActivityType.OTHER,
         f"Gym: trained {stat}",
-        description=f"+{gain} {stat} → {new_val}",
+        description=f"+{gain} {stat} -> {new_val}",
         energy_cost=cost,
     )
     await db.flush()
