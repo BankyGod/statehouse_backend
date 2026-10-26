@@ -210,6 +210,14 @@ async def register_candidacy(
 
     state_id = character.home_state_id if race_type == RaceType.MP else None
     character.cash -= fee
+    from app.services import treasury_service
+
+    await treasury_service.collect_fee(
+        db,
+        fee,
+        note=f"Candidacy fee — {race_type.value}",
+        character_id=character.id,
+    )
     candidacy = Candidacy(
         election_id=election_id,
         character_id=character.id,

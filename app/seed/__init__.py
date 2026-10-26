@@ -161,6 +161,24 @@ async def seed_stocks(db: AsyncSession) -> int:
     return await stock_service.seed_government_listings(db)
 
 
+async def seed_enterprises(db: AsyncSession) -> int:
+    from app.services import enterprise_service
+
+    return await enterprise_service.ensure_enterprises_seeded(db)
+
+
+async def seed_education(db: AsyncSession) -> int:
+    from app.services import education_service
+
+    return await education_service.ensure_education_seeded(db)
+
+
+async def seed_carriers(db: AsyncSession) -> int:
+    from app.services import travel_service
+
+    return await travel_service.ensure_carriers_seeded(db)
+
+
 async def seed_mogul(db: AsyncSession) -> dict:
     from app.seed.demo_mogul import seed_demo_mogul
 
@@ -182,6 +200,9 @@ async def run_seed(db: AsyncSession) -> dict:
     living = await seed_living_world(db)
     npc_citizens = await seed_npc_citizens(db)
     stocks = await seed_stocks(db)
+    enterprises = await seed_enterprises(db)
+    education = await seed_education(db)
+    carriers = await seed_carriers(db)
     extra = await seed_news_and_budget(db)
     events = await seed_events(db)
     mogul = await seed_mogul(db)
@@ -194,6 +215,9 @@ async def run_seed(db: AsyncSession) -> dict:
         "living_world": living,
         "npc_citizens": npc_citizens,
         "stocks": stocks,
+        "enterprises": enterprises,
+        "education_programs": education,
+        "carriers": carriers,
         "events": events,
         "mogul": mogul,
         **extra,

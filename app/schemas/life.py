@@ -19,7 +19,10 @@ class EducationCatalogItem(BaseModel):
 
 
 class EnrollRequest(BaseModel):
-    track: EducationTrack
+    """Prefer program_id. track kept for legacy clients."""
+
+    program_id: int | None = None
+    track: EducationTrack | None = None
 
 
 class EnrollmentOut(BaseModel):
@@ -30,6 +33,12 @@ class EnrollmentOut(BaseModel):
     cost_paid: float
     age_gain_years: float
     education_level: int
+    institution_id: int | None = None
+    program_id: int | None = None
+    institution_name: str | None = None
+    institution_slug: str | None = None
+    institution_kind: str | None = None
+    institution_ownership: str | None = None
     started_at: datetime
     completes_at: datetime
     completed_at: datetime | None
@@ -73,12 +82,15 @@ class BusinessCreate(BaseModel):
     state_id: int
     local_address: str = Field(min_length=5, max_length=255)
     description: str | None = None
+    entity_type: str = "sole_trader"
+    starting_capital: float = Field(default=0, ge=0, le=50000)
 
 
 class BusinessOut(BaseModel):
     id: int
     name: str
     sector: str
+    entity_type: str = "sole_trader"
     state_id: int
     status: str
     cash_balance: float
@@ -170,10 +182,12 @@ class CrimeResultOut(BaseModel):
 
 class TravelQuoteRequest(BaseModel):
     to_state_id: int
+    carrier_id: int | None = None
 
 
 class TravelStartRequest(BaseModel):
     to_state_id: int
+    carrier_id: int | None = None
 
 
 class TravelQuoteOut(BaseModel):
@@ -182,6 +196,10 @@ class TravelQuoteOut(BaseModel):
     cost: float
     minutes: int
     discounted_cost: float | None = None
+    carrier_id: int | None = None
+    carrier_name: str | None = None
+    mode: str | None = None
+    permit_applies: bool | None = None
 
 
 class BankAmountRequest(BaseModel):

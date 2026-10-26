@@ -126,7 +126,14 @@ async def work_shift(db: AsyncSession, character: Character) -> dict:
         if event["effect_key"] == "job_pay_boost":
             wage = round(wage * float(event["effect_value"]), 2)
 
-    character.cash += wage
+    from app.services import treasury_service
+
+    pay = await treasury_service.pay_taxable_income(
+        db,
+        character,
+        wage,
+        note=f"Income tax — shift {listing.title}",
+    )
     job.shifts_completed += 1
 
     activity = Activity(
@@ -136,7 +143,7 @@ async def work_shift(db: AsyncSession, character: Character) -> dict:
         title=f"Shift: {listing.title}",
         age_gain_years=0,
         energy_cost=listing.energy_cost,
-        cash_delta=wage,
+        cash_delta=pay["net"],
         started_at=now,
         completes_at=completes,
         completed_at=now,
@@ -152,6 +159,10 @@ async def work_shift(db: AsyncSession, character: Character) -> dict:
 
     return {
         "wage": wage,
+        "gross": pay["gross"],
+        "tax": pay["tax"],
+        "tax_rate": pay["rate"],
+        "net": pay["net"],
         "energy_spent": listing.energy_cost,
         "shifts_completed": job.shifts_completed,
         "cash": character.cash,

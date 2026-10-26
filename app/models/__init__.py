@@ -5,8 +5,14 @@ from app.models.cabinet import CabinetSeat
 from app.models.character import Character
 from app.models.chat import ChatMessage
 from app.models.crime import CrimeAttempt, CriminalRecord
-from app.models.education import EducationEnrollment
+from app.models.education import (
+    EducationEnrollment,
+    EducationInstitution,
+    EducationProgram,
+)
 from app.models.employee import BusinessEmployee
+from app.models.enterprise import StateEnterprise
+from app.models.transport import TransportCarrier
 from app.models.housing import HousingListing, Residence
 from app.models.item import InventoryItem, MarketListing, Notification
 from app.models.job import Job, JobListing
@@ -17,6 +23,7 @@ from app.models.permit import Permit
 from app.models.government import GovernmentPost
 from app.models.party import PartyMembership, PoliticalParty
 from app.models.politics import Ballot, Candidacy, Election, NationOffice
+from app.models.treasury import TreasuryTransaction
 from app.models.social import (
     AttackLog,
     DirectMessage,
@@ -38,6 +45,10 @@ __all__ = [
     "Job",
     "JobListing",
     "EducationEnrollment",
+    "EducationInstitution",
+    "EducationProgram",
+    "StateEnterprise",
+    "TransportCarrier",
     "Business",
     "BusinessEmployee",
     "Permit",
@@ -53,6 +64,7 @@ __all__ = [
     "Candidacy",
     "Ballot",
     "NationOffice",
+    "TreasuryTransaction",
     "Bill",
     "BillVote",
     "BudgetReading",

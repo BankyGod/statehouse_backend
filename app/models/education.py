@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -23,6 +23,19 @@ class EnrollmentStatus(str, enum.Enum):
     COMPLETED = "completed"
     DROPPED = "dropped"
     FAILED = "failed"
+
+
+class InstitutionKind(str, enum.Enum):
+    PUBLIC_UNIVERSITY = "public_university"
+    PRIVATE_UNIVERSITY = "private_university"
+    POLYTECHNIC = "polytechnic"
+    MILITARY_ACADEMY = "military_academy"
+    MEDICAL_SCHOOL = "medical_school"
+
+
+class InstitutionOwnership(str, enum.Enum):
+    GOVERNMENT = "government"
+    PRIVATE = "private"
 
 
 # Real-time durations (days) and game age gain (years) — scaled activity table
@@ -79,6 +92,41 @@ EDUCATION_CATALOG: dict[EducationTrack, dict] = {
 }
 
 
+class EducationInstitution(Base, TimestampMixin):
+    __tablename__ = "education_institutions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    kind: Mapped[InstitutionKind] = mapped_column(Enum(InstitutionKind), index=True)
+    ownership: Mapped[InstitutionOwnership] = mapped_column(Enum(InstitutionOwnership))
+    state_id: Mapped[int] = mapped_column(ForeignKey("states.id"), index=True)
+    enterprise_id: Mapped[int | None] = mapped_column(
+        ForeignKey("state_enterprises.id"), nullable=True
+    )
+    prestige: Mapped[int] = mapped_column(Integer, default=3)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class EducationProgram(Base, TimestampMixin):
+    __tablename__ = "education_programs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    institution_id: Mapped[int] = mapped_column(
+        ForeignKey("education_institutions.id", ondelete="CASCADE"), index=True
+    )
+    track: Mapped[EducationTrack] = mapped_column(Enum(EducationTrack), index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    real_days: Mapped[float] = mapped_column(Float)
+    age_years: Mapped[float] = mapped_column(Float)
+    cost: Mapped[float] = mapped_column(Float)
+    level: Mapped[int] = mapped_column(Integer)
+    min_education_level: Mapped[int] = mapped_column(Integer, default=0)
+    capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class EducationEnrollment(Base, TimestampMixin):
     __tablename__ = "education_enrollments"
 
@@ -87,6 +135,12 @@ class EducationEnrollment(Base, TimestampMixin):
         ForeignKey("characters.id", ondelete="CASCADE"), index=True
     )
     track: Mapped[EducationTrack] = mapped_column(Enum(EducationTrack))
+    institution_id: Mapped[int | None] = mapped_column(
+        ForeignKey("education_institutions.id"), nullable=True, index=True
+    )
+    program_id: Mapped[int | None] = mapped_column(
+        ForeignKey("education_programs.id"), nullable=True, index=True
+    )
     status: Mapped[EnrollmentStatus] = mapped_column(
         Enum(EnrollmentStatus), default=EnrollmentStatus.ENROLLED
     )

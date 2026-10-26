@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -117,3 +118,7 @@ class NationOffice(Base, TimestampMixin):
         String(128), default="Speaker Ruth Mensah (NPC)"
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # National treasury bank account (all taxes & gov fees)
+    treasury_balance: Mapped[float] = mapped_column(Float, default=100_000.0)
+    # Active rate from last passed budget reading
+    national_tax_rate: Mapped[float] = mapped_column(Float, default=0.05)

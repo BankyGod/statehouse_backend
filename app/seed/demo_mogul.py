@@ -22,7 +22,7 @@ from app.services import employee_service, housing_service
 
 DEMO_USERNAME = "mogul"
 DEMO_PASSWORD = "password123"
-DEMO_EMAIL = "mogul@unitedamir.test"
+DEMO_EMAIL = "mogul@unitedamir.com"
 DEMO_DISPLAY = "TycoonBanky"
 
 # 4 degrees + 1 master's (custom titles)
@@ -163,7 +163,8 @@ async def seed_demo_mogul(db: AsyncSession) -> dict:
         owner_id=character.id,
         state_id=state.id,
         name="Amir Consolidated Holdings",
-        sector="conglomerate",
+        sector="other",
+        entity_type="limited_company",
         description=(
             "National conglomerate: logistics, retail, and light manufacturing. "
             "Demo company with a large payroll."

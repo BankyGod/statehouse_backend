@@ -13,9 +13,17 @@ from app.core.security import decode_access_token
 
 settings = get_settings()
 
+# Socket.IO has no origin regex; allow all in non-dev so Vercel hosts work.
+# Auth is still enforced via JWT on connect.
+_sio_cors: list[str] | str = (
+    settings.cors_origin_list
+    if settings.app_env == "development" and settings.cors_origin_list
+    else "*"
+)
+
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=settings.cors_origin_list or "*",
+    cors_allowed_origins=_sio_cors,
     logger=False,
     engineio_logger=False,
     ping_interval=25,

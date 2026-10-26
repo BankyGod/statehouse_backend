@@ -9,6 +9,7 @@ from app.core.game_time import utcnow
 from app.models.cabinet import PORTFOLIO_LABELS, CabinetSeat, Portfolio
 from app.models.character import Character
 from app.models.state import State
+from app.models.user import User
 from app.services import news_service, politics_service
 from app.services.character_service import ensure_can_act
 
@@ -53,21 +54,58 @@ async def list_cabinet(db: AsyncSession) -> list[dict]:
     seats = []
     for seat in result.scalars().all():
         name = seat.npc_name
+        username: str | None = None
         if seat.character_id:
             ch = await db.get(Character, seat.character_id)
-            name = ch.display_name if ch else name
+            if ch:
+                name = ch.display_name
+                owner = await db.get(User, ch.user_id)
+                username = owner.username if owner else None
         seats.append(
             {
                 "id": seat.id,
                 "portfolio": seat.portfolio.value,
                 "title": seat.title,
                 "character_id": seat.character_id,
+                "username": username,
                 "name": name,
                 "is_npc": seat.is_npc,
                 "appointed_at": seat.appointed_at,
             }
         )
     return seats
+
+
+async def resolve_appointee(
+    db: AsyncSession,
+    *,
+    username: str,
+    character_id: int | None,
+) -> Character:
+    """Resolve a real player by login username; optional character_id must match."""
+    uname = username.strip().lower()
+    result = await db.execute(select(User).where(User.username == uname))
+    user = result.scalar_one_or_none()
+    if user is None or getattr(user, "is_bot", False):
+        raise HTTPException(status_code=404, detail="No player account with that username")
+
+    char_result = await db.execute(
+        select(Character).where(Character.user_id == user.id)
+    )
+    character = char_result.scalar_one_or_none()
+    if character is None:
+        raise HTTPException(
+            status_code=400, detail="That username has no character yet"
+        )
+    if character_id is not None and character.id != character_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Username '{user.username}' is tied to character #{character.id}, "
+                f"not #{character_id}"
+            ),
+        )
+    return character
 
 
 async def _require_president(db: AsyncSession, character: Character) -> None:
@@ -89,23 +127,29 @@ async def appoint(
     db: AsyncSession,
     president: Character,
     portfolio: Portfolio,
-    appointee_id: int,
+    *,
+    username: str,
+    character_id: int | None = None,
 ) -> dict:
     ensure_can_act(president)
     await _require_president(db, president)
     settings = get_settings()
 
+    appointee = await resolve_appointee(
+        db, username=username, character_id=character_id
+    )
+    appointee_id = appointee.id
+
     if appointee_id == president.id:
         raise HTTPException(status_code=400, detail="President cannot hold a ministry")
-
-    appointee = await db.get(Character, appointee_id)
-    if appointee is None:
-        raise HTTPException(status_code=404, detail="Character not found")
+    if getattr(appointee, "is_npc", False):
+        raise HTTPException(status_code=400, detail="Cannot appoint an NPC citizen")
     if appointee.heat >= settings.max_heat_to_run:
         raise HTTPException(status_code=400, detail="Appointee heat too high")
     if settings.cabinet_require_mp and not await _is_mp(db, appointee_id):
         raise HTTPException(
-            status_code=400, detail="Ministers must be sitting MPs"
+            status_code=400,
+            detail="Ministers must be sitting MPs (or disable CABINET_REQUIRE_MP)",
         )
 
     # One ministry per person
@@ -125,8 +169,13 @@ async def appoint(
     if seat is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    # Restore previous player minister reputation note only
+    # Replacing a previous player minister — soft reputation hit
     now = utcnow()
+    if seat.character_id and not seat.is_npc and seat.character_id != appointee_id:
+        prev = await db.get(Character, seat.character_id)
+        if prev:
+            prev.reputation = max(-100, prev.reputation - 10)
+
     seat.character_id = appointee_id
     seat.is_npc = False
     seat.npc_name = None
@@ -134,10 +183,13 @@ async def appoint(
     seat.last_salary_at = now
     appointee.reputation += 15
 
+    owner = await db.get(User, appointee.user_id)
+    login_name = owner.username if owner else username.strip().lower()
+
     await news_service.publish(
         db,
         f"Cabinet: {PORTFOLIO_LABELS[portfolio]}",
-        f"{appointee.display_name} appointed by President {president.display_name}.",
+        f"{appointee.display_name} (@{login_name}) appointed by President {president.display_name}.",
         category="politics",
     )
     await db.flush()
@@ -145,8 +197,10 @@ async def appoint(
         "portfolio": portfolio.value,
         "title": seat.title,
         "character_id": appointee_id,
+        "username": login_name,
         "name": appointee.display_name,
         "is_npc": False,
+        "message": f"{appointee.display_name} (@{login_name}) appointed.",
     }
 
 
@@ -160,8 +214,13 @@ async def dismiss(
         select(CabinetSeat).where(CabinetSeat.portfolio == portfolio)
     )
     seat = result.scalar_one_or_none()
-    if seat is None or seat.is_npc:
-        raise HTTPException(status_code=400, detail="No player minister to dismiss")
+    if seat is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    if seat.is_npc or not seat.character_id:
+        raise HTTPException(
+            status_code=400,
+            detail="That seat is an NPC caretaker — use Appoint to replace them with a player",
+        )
 
     old_id = seat.character_id
     old = await db.get(Character, old_id) if old_id else None
@@ -250,7 +309,25 @@ async def pay_minister_salaries(db: AsyncSession) -> int:
         ch = await db.get(Character, seat.character_id)
         if ch is None:
             continue
-        ch.cash += settings.minister_weekly_salary
+        from app.services import treasury_service
+        from app.models.treasury import TreasuryTxType
+
+        gross = settings.minister_weekly_salary
+        funded = await treasury_service.debit(
+            db,
+            gross,
+            TreasuryTxType.SALARY,
+            note=f"Minister salary — {seat.title}",
+            character_id=ch.id,
+            allow_overdraft=True,
+        )
+        if funded > 0:
+            await treasury_service.pay_taxable_income(
+                db,
+                ch,
+                funded,
+                note=f"Income tax — minister {seat.title}",
+            )
         seat.last_salary_at = now
         paid += 1
     if paid:

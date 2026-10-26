@@ -52,18 +52,26 @@ print("cabinet seats", len(cabinet["seats"]), cabinet["seats"][0]["name"])
 appoint = c.post(
     "/api/cabinet/appoint",
     headers=prez_h,
-    json={"portfolio": "trade", "character_id": mp_id},
+    json={"portfolio": "trade", "username": "minmp1", "character_id": mp_id},
 )
 print("appoint", appoint.status_code, appoint.json())
 
 mine = c.get("/api/cabinet/me", headers=mp_h).json()
 print("mp seat", mine)
 
-# President cannot appoint non-MP
+# Mismatched username / character_id
+mismatch = c.post(
+    "/api/cabinet/appoint",
+    headers=prez_h,
+    json={"portfolio": "health", "username": "minmp1", "character_id": prez_id},
+)
+print("mismatch", mismatch.status_code, mismatch.json())
+
+# President cannot appoint self
 fail = c.post(
     "/api/cabinet/appoint",
     headers=prez_h,
-    json={"portfolio": "health", "character_id": prez_id},
+    json={"portfolio": "health", "username": "prez1", "character_id": prez_id},
 )
 print("self_appoint", fail.status_code, fail.json())
 

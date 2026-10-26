@@ -74,6 +74,14 @@ async def apply_permit(
 
     now = utcnow()
     character.cash -= fee
+    from app.services import treasury_service
+
+    await treasury_service.collect_fee(
+        db,
+        fee,
+        note=f"Permit fee — {permit_type.value}",
+        character_id=character.id,
+    )
     permit = Permit(
         character_id=character.id,
         state_id=state_id,

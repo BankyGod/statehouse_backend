@@ -110,7 +110,7 @@ Torn-style: top bar with cash / energy / age / heat, plus notifications.
 
 1. **Identity** — account + one character + home state  
 2. **Jobs** — browse listings, hire, work shifts for wages  
-3. **Education** — enroll in tracks; wait; gain education level + age  
+3. **Education** — pick a school, then a course/program; wait; gain education level + age  
 4. **Business** — register a company in a state (pending → active)  
 5. **Permits** — work / business / travel for other states  
 6. **Crime** — optional, profitable short-term, punished hard  
@@ -118,8 +118,10 @@ Torn-style: top bar with cash / energy / age / heat, plus notifications.
 
 ### Built in this backend pass
 
-7. **Travel** — quote + start trip; arrive on timer; blocks actions while traveling  
+7. **Travel** — pick destination, then air/rail/bus carrier (price/time differ); arrive on timer  
 8. **Bank** — deposit / withdraw / loans / transfers / savings interest / transaction ledger  
+8b. **National treasury & tax** — income tax on wages, corporate tax on company revenue, gov fees/fines/bail → country treasury; public salaries paid from treasury  
+
 9. **Stocks (separate)** — gov + business IPOs; buy/sell shares; investors exit only by selling  
 10. **Energy regen** — 1 energy every 5 minutes (on `/characters/me` tick)  
 11. **Heat decay** — slowly drops while free  
@@ -341,11 +343,20 @@ Jobs:
 
 Education:
 
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/education/institutions` | Schools (gov/private); `?state_id=` `?kind=` |
+| GET | `/api/education/institutions/{id}/programs` | Courses at that school |
+| GET | `/api/education/programs` | Flattened program catalog |
+| GET | `/api/education/catalog` | Legacy track list |
+| POST | `/api/education/enroll` | `{ program_id }` preferred; `{ track }` legacy |
+| GET | `/api/education/me` | |
+
+Enterprises (thin SOEs):
+
 | Method | Path |
 |---|---|
-| GET | `/api/education/catalog` |
-| POST | `/api/education/enroll` |
-| GET | `/api/education/me` |
+| GET | `/api/enterprises` | National rail / energy / port / uni system |
 
 Permits:
 
@@ -356,10 +367,12 @@ Permits:
 
 Business:
 
-| Method | Path |
-|---|---|
-| POST | `/api/businesses` |
-| GET | `/api/businesses/me` | includes `employee_count`, lifetime revenue/wages |
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/businesses/catalog` | Sector + entity-type lists and fees |
+| GET | `/api/businesses/preview` | `state_id`, `entity_type`, `starting_capital` → fee/permit/total |
+| POST | `/api/businesses` | `{ name, sector, state_id, local_address, entity_type?, starting_capital?, description? }` |
+| GET | `/api/businesses/me` | includes `employee_count`, `entity_type`, lifetime revenue/wages |
 | GET | `/api/businesses/{id}/employees` | staff roster |
 | POST | `/api/businesses/{id}/employees/hire` | `{ role?, display_name? }` NPC hire |
 | POST | `/api/businesses/{id}/employees/hire-player` | `{ display_name, role?, wage_per_week? }` |
@@ -394,10 +407,13 @@ Crime:
 
 Travel:
 
-| Method | Path |
-|---|---|
-| POST | `/api/travel/quote` | `{ to_state_id }` |
-| POST | `/api/travel/start` | `{ to_state_id }` |
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/travel/options?to_state_id=` | Carriers with cost/minutes/mode/ownership |
+| POST | `/api/travel/quote` | `{ to_state_id, carrier_id? }` |
+| POST | `/api/travel/start` | `{ to_state_id, carrier_id? }` — pick a carrier |
+
+Permit discounts: **25%** bus/rail, **10%** air when you hold a travel permit for the destination (or home state).
 
 Bank (not stocks — keep UI separate):
 
@@ -410,6 +426,26 @@ Bank (not stocks — keep UI separate):
 | POST | `/api/bank/transfer` | `{ to_display_name, amount }` (+ fee) |
 | POST | `/api/bank/loans` | `{ amount }` → funds **bank** |
 | POST | `/api/bank/loans/{id}/repay` | `{ amount }` from bank then cash |
+
+National treasury (country bank account — all tax goes here):
+
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/api/treasury` | auth — **officials only** (President, VP, Speaker, MPs, ministers): balance + ledger |
+| GET | `/api/treasury/my-rate` | auth — any citizen: your rates (no balance) |
+| POST | `/api/treasury/disburse` | President or Finance Minister: `{ amount, reason, to_character_id? \| to_display_name? }` max $5k |
+| POST | `/api/treasury/donate` | President or Finance Minister: inject personal cash `{ amount, note? }` |
+
+**Access**
+- **View:** President, VP, Speaker, sitting MPs, cabinet ministers  
+- **Spend / donate:** President **or** Minister of Finance only (ledgered; MPs cannot move funds)
+
+**Taxed automatically (moderate rates ~3–10%)**
+- Job shifts, company payroll (players), minister + civil-service salaries → **income tax**
+- Business ops revenue → **corporate tax** (~70% of national rate)
+- Business registration / candidacy / permits → **fee**; crime fines → **fine**; bail → **bail**
+- Budget readings set national rate within **3–10%** (default **5%**)
+- Opening treasury: **$100,000**
 
 Savings interest accrues daily on `bank_balance` (default 4% APR).
 
@@ -493,7 +529,7 @@ Cabinet:
 |---|---|
 | GET | `/api/cabinet` | 10 seats (NPC caretakers until appointed) |
 | GET | `/api/cabinet/me` | your ministry if any |
-| POST | `/api/cabinet/appoint` | `{ portfolio, character_id }` president only |
+| POST | `/api/cabinet/appoint` | `{ portfolio, username, character_id? }` president only — username required; id must match that account if sent |
 | POST | `/api/cabinet/dismiss` | `{ portfolio }` president only |
 | POST | `/api/cabinet/resign` | leave your post |
 | GET | `/api/parties` | 5 political parties (NPC leaders + member counts) |
@@ -599,10 +635,11 @@ Currency is **$** (dollars). Display as `$1,234.56`.
 
 ### Education
 
-- Catalog cards with cost, real days, age gain, level
-- One active enrollment at a time
+- Browse **institutions** (gov vs private badge, state, prestige)
+- Open **programs/courses** for a school, then enroll by `program_id`
+- Show cost, real days, age gain, prereq education level
+- One active enrollment at a time (`status === enrolled`)
 - Progress list with countdown to `completes_at`
-- On complete, age increases (visible on HUD)
 
 ### Permits
 

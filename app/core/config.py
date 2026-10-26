@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     neon_auth_base_url: str | None = None
     neon_auth_jwks_url: str | None = None
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    # Also allow Vercel preview/prod hosts (FastAPI allow_origin_regex)
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
 
     # 8:1 calendar — 4 game years = 6 real months
     game_time_ratio: int = 8
@@ -74,6 +76,12 @@ class Settings(BaseSettings):
     budget_interval_days: float = 45.0  # ~6.5 weeks
     cabinet_require_mp: bool = True
     minister_weekly_salary: float = 400.0
+    # Tax / treasury (keep moderate — felt but not crushing)
+    default_national_tax_rate: float = 0.05
+    corporate_tax_multiplier: float = 0.70  # corp rate = national * this (~3.5%)
+    treasury_max_disburse: float = 5000.0  # per transfer by Finance/President
+    min_national_tax_rate: float = 0.03
+    max_national_tax_rate: float = 0.10
 
     # Chat
     chat_max_length: int = 280

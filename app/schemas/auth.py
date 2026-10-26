@@ -19,7 +19,8 @@ class TokenResponse(BaseModel):
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    # Plain str — response must not 500 on legacy/test addresses in DB
+    email: str
     username: str
     is_active: bool
 

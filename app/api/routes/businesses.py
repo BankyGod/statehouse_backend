@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.models.business import Business
+from app.models.business import Business, BusinessEntityType
 from app.models.user import User
 from app.schemas.life import (
     BusinessCashRequest,
@@ -25,6 +25,8 @@ async def _to_out(db: AsyncSession, business: Business) -> BusinessOut:
         id=business.id,
         name=business.name,
         sector=business.sector,
+        entity_type=getattr(business, "entity_type", None)
+        or BusinessEntityType.SOLE_TRADER.value,
         state_id=business.state_id,
         status=business.status.value if hasattr(business.status, "value") else str(business.status),
         cash_balance=business.cash_balance,
@@ -37,6 +39,33 @@ async def _to_out(db: AsyncSession, business: Business) -> BusinessOut:
         is_public=business.is_public,
         lifetime_revenue=getattr(business, "lifetime_revenue", 0.0) or 0.0,
         lifetime_wages=getattr(business, "lifetime_wages", 0.0) or 0.0,
+    )
+
+
+@router.get("/catalog")
+async def business_catalog():
+    return business_service.registration_catalog()
+
+
+@router.get("/preview")
+async def business_preview(
+    state_id: int = Query(...),
+    entity_type: str = Query(default="sole_trader"),
+    starting_capital: float = Query(default=0, ge=0, le=50000),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    try:
+        et = BusinessEntityType(entity_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid business type") from exc
+    return await business_service.registration_preview(
+        db,
+        character,
+        state_id=state_id,
+        entity_type=et,
+        starting_capital=starting_capital,
     )
 
 
@@ -56,6 +85,8 @@ async def create_business(
         state_id=payload.state_id,
         local_address=payload.local_address,
         description=payload.description,
+        entity_type=payload.entity_type,
+        starting_capital=payload.starting_capital,
     )
     return await _to_out(db, business)
 

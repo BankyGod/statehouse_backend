@@ -396,14 +396,36 @@ async def pay_gov_salaries(db: AsyncSession) -> int:
         ch = await db.get(Character, post.character_id)
         if ch is None:
             continue
-        ch.cash = round(ch.cash + post.wage_per_week, 2)
+        from app.services import treasury_service
+        from app.models.treasury import TreasuryTxType
+
+        funded = await treasury_service.debit(
+            db,
+            post.wage_per_week,
+            TreasuryTxType.SALARY,
+            note=f"Civil service — {post.title}",
+            character_id=ch.id,
+            allow_overdraft=True,
+        )
+        net = 0.0
+        tax = 0.0
+        if funded > 0:
+            pay = await treasury_service.pay_taxable_income(
+                db,
+                ch,
+                funded,
+                note=f"Income tax — {post.title}",
+            )
+            net = pay["net"]
+            tax = pay["tax"]
         post.last_payday_at = now
         paid += 1
+        tax_bit = f", tax ${tax:.2f}" if tax > 0 else ""
         await notify_service.push(
             db,
             ch.id,
             "Government payday",
-            body=f"+${post.wage_per_week:.2f} ({post.title})",
+            body=f"+${net:.2f} ({post.title}{tax_bit})",
             category="government",
         )
     if paid:

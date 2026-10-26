@@ -155,6 +155,18 @@ async def commit_crime(
 
     character.heat = min(100.0, character.heat)
 
+    if fine > 0:
+        from app.services import treasury_service
+        from app.models.treasury import TreasuryTxType
+
+        await treasury_service.collect_fee(
+            db,
+            fine,
+            note=f"Crime fine — {meta['label']}",
+            character_id=character.id,
+            tx_type=TreasuryTxType.FINE,
+        )
+
     attempt = CrimeAttempt(
         character_id=character.id,
         state_id=state.id,

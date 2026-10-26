@@ -218,7 +218,10 @@ async def veto_bill(db: AsyncSession, character: Character, bill_id: int) -> Bil
 async def _open_budget(db: AsyncSession) -> BudgetReading:
     settings = get_settings()
     now = utcnow()
-    rate = round(random.uniform(0.08, 0.14), 3)
+    rate = round(
+        random.uniform(settings.min_national_tax_rate, settings.max_national_tax_rate),
+        3,
+    )
     budget = BudgetReading(
         title=f"National Budget {now.strftime('%b %Y')}",
         summary=(
@@ -252,6 +255,11 @@ async def resolve_due_budgets(db: AsyncSession) -> int:
         total_no = budget.no_votes + (npc - npc_yes)
         if total_yes >= MAJORITY and total_yes > total_no:
             budget.status = BudgetStatus.PASSED
+            from app.services import treasury_service
+
+            await treasury_service.set_national_tax_rate(
+                db, budget.national_tax_rate
+            )
             await news_service.publish(
                 db,
                 f"Budget passed: {budget.title}",

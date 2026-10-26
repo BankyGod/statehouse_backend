@@ -70,6 +70,16 @@ async def pay_bail(db: AsyncSession, character: Character) -> dict:
         character.cash = round(character.cash - cost, 2)
     else:
         character.bank_balance = round(character.bank_balance - cost, 2)
+    from app.services import treasury_service
+    from app.models.treasury import TreasuryTxType
+
+    await treasury_service.collect_fee(
+        db,
+        paid,
+        note="Jail bail",
+        character_id=character.id,
+        tx_type=TreasuryTxType.BAIL,
+    )
     character.is_jailed = False
     character.jail_until = None
     character.heat = min(100.0, character.heat + 5.0)

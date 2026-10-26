@@ -47,6 +47,7 @@ BUSINESS_COLUMNS = {
     "last_payroll_at": "DATETIME",
     "lifetime_revenue": "FLOAT DEFAULT 0",
     "lifetime_wages": "FLOAT DEFAULT 0",
+    "entity_type": "VARCHAR(32) DEFAULT 'sole_trader'",
 }
 
 
@@ -54,12 +55,33 @@ NATION_OFFICE_COLUMNS_SQLITE = {
     "vice_president_character_id": "INTEGER",
     "vice_president_npc_name": "VARCHAR(128) DEFAULT 'Vice President Kwesi Nkrumah (NPC)'",
     "speaker_npc_name": "VARCHAR(128) DEFAULT 'Speaker Ruth Mensah (NPC)'",
+    "treasury_balance": "FLOAT DEFAULT 100000",
+    "national_tax_rate": "FLOAT DEFAULT 0.05",
 }
 
 NATION_OFFICE_COLUMNS_PG = {
     "vice_president_character_id": "INTEGER",
     "vice_president_npc_name": "VARCHAR(128)",
     "speaker_npc_name": "VARCHAR(128)",
+    "treasury_balance": "DOUBLE PRECISION DEFAULT 100000",
+    "national_tax_rate": "DOUBLE PRECISION DEFAULT 0.05",
+}
+
+EDUCATION_ENROLLMENT_COLUMNS = {
+    "institution_id": "INTEGER",
+    "program_id": "INTEGER",
+}
+
+TRAVEL_LOG_COLUMNS_SQLITE = {
+    "carrier_id": "INTEGER",
+    "mode": "VARCHAR(16)",
+    "carrier_name": "VARCHAR(128)",
+}
+
+TRAVEL_LOG_COLUMNS_PG = {
+    "carrier_id": "INTEGER",
+    "mode": "VARCHAR(16)",
+    "carrier_name": "VARCHAR(128)",
 }
 
 
@@ -99,6 +121,10 @@ async def ensure_sqlite_columns(conn: AsyncConnection) -> None:
     await _add_missing_sqlite(conn, "states", STATE_COLUMNS)
     await _add_missing_sqlite(conn, "businesses", BUSINESS_COLUMNS)
     await _add_missing_sqlite(conn, "nation_office", NATION_OFFICE_COLUMNS_SQLITE)
+    await _add_missing_sqlite(
+        conn, "education_enrollments", EDUCATION_ENROLLMENT_COLUMNS
+    )
+    await _add_missing_sqlite(conn, "travel_logs", TRAVEL_LOG_COLUMNS_SQLITE)
 
 
 async def ensure_postgres_columns(conn: AsyncConnection) -> None:
@@ -115,6 +141,15 @@ async def ensure_postgres_columns(conn: AsyncConnection) -> None:
     await _add_missing_pg(
         conn, "states", {"npc_population_count": "INTEGER DEFAULT 0"}
     )
+    await _add_missing_pg(
+        conn, "education_enrollments", EDUCATION_ENROLLMENT_COLUMNS
+    )
+    await _add_missing_pg(conn, "travel_logs", TRAVEL_LOG_COLUMNS_PG)
+    await _add_missing_pg(
+        conn,
+        "businesses",
+        {"entity_type": "VARCHAR(32) DEFAULT 'sole_trader'"},
+    )
     # Backfill NPC office defaults if null
     await conn.execute(
         text(
@@ -122,7 +157,9 @@ async def ensure_postgres_columns(conn: AsyncConnection) -> None:
             UPDATE nation_office
             SET vice_president_npc_name = COALESCE(vice_president_npc_name, 'Vice President Kwesi Nkrumah (NPC)'),
                 speaker_npc_name = COALESCE(speaker_npc_name, 'Speaker Ruth Mensah (NPC)'),
-                president_npc_name = COALESCE(president_npc_name, 'President Ama Serwaa (NPC)')
+                president_npc_name = COALESCE(president_npc_name, 'President Ama Serwaa (NPC)'),
+                treasury_balance = COALESCE(treasury_balance, 100000),
+                national_tax_rate = COALESCE(national_tax_rate, 0.05)
             WHERE id = 1
             """
         )

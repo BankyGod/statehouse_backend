@@ -25,6 +25,7 @@ from app.models.user import User
 from app.services import (
     bank_service,
     crime_service,
+    education_service,
     job_service,
     tick_service,
     travel_service,
@@ -280,7 +281,43 @@ async def _action_chat(db: AsyncSession, character: Character) -> str:
     return "chat"
 
 
+async def _action_study(db: AsyncSession, character: Character) -> str:
+    from app.models.education import EducationEnrollment, EducationProgram, EnrollmentStatus
+
+    active = await db.execute(
+        select(EducationEnrollment.id).where(
+            EducationEnrollment.character_id == character.id,
+            EducationEnrollment.status == EnrollmentStatus.ENROLLED,
+        )
+    )
+    if active.scalar_one_or_none():
+        return "idle"
+    await education_service.ensure_education_seeded(db)
+    programs = list(
+        (
+            await db.execute(
+                select(EducationProgram)
+                .where(
+                    EducationProgram.is_active.is_(True),
+                    EducationProgram.cost <= character.cash,
+                    EducationProgram.min_education_level <= 1,
+                )
+                .limit(40)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not programs:
+        return "idle"
+    program = random.choice(programs)
+    await education_service.enroll_in_program(db, character, program.id)
+    return "study"
+
+
 async def _action_travel(db: AsyncSession, character: Character) -> str:
+    from app.models.transport import TransportCarrier
+
     states = list((await db.execute(select(State.id))).scalars().all())
     options = [s for s in states if s != character.current_state_id]
     if not options:
@@ -291,7 +328,18 @@ async def _action_travel(db: AsyncSession, character: Character) -> str:
         dest = character.home_state_id
     if character.cash < 40:
         return "idle"
-    await travel_service.start_travel(db, character, dest)
+    await travel_service.ensure_carriers_seeded(db)
+    carriers = list(
+        (
+            await db.execute(
+                select(TransportCarrier.id).where(TransportCarrier.is_active.is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    carrier_id = random.choice(carriers) if carriers else None
+    await travel_service.start_travel(db, character, dest, carrier_id=carrier_id)
     return "travel"
 
 
@@ -325,7 +373,8 @@ async def _pick_and_act(db: AsyncSession, character: Character) -> str:
         ("chat", 22),
         ("gym", 12),
         ("bank", 10),
-        ("travel", 10),
+        ("travel", 8),
+        ("study", 4),
         ("crime", 5),
         ("idle", 3),
     ]
@@ -343,6 +392,8 @@ async def _pick_and_act(db: AsyncSession, character: Character) -> str:
             return await _action_chat(db, character)
         if pick == "travel":
             return await _action_travel(db, character)
+        if pick == "study":
+            return await _action_study(db, character)
         if pick == "crime":
             return await _action_crime(db, character)
         if pick == "gym":

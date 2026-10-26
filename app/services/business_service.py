@@ -6,14 +6,102 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.game_time import utcnow
 from app.models.activity import Activity, ActivityStatus, ActivityType
-from app.models.business import Business, BusinessStatus
+from app.models.business import (
+    ENTITY_TYPE_CATALOG,
+    SECTOR_CATALOG,
+    Business,
+    BusinessEntityType,
+    BusinessSector,
+    BusinessStatus,
+)
 from app.models.character import Character
 from app.models.permit import Permit, PermitStatus, PermitType
 from app.models.state import State
 from app.services.character_service import ensure_can_act
 
-REGISTRATION_FEE = 150.0
 REGISTRATION_HOURS = 12  # few hours to 1 day
+DEFAULT_REGISTRATION_FEE = 150.0
+
+
+def _fee_for_entity(entity_type: BusinessEntityType) -> float:
+    for row in ENTITY_TYPE_CATALOG:
+        if row["value"] == entity_type:
+            return float(row["registration_fee"])
+    return DEFAULT_REGISTRATION_FEE
+
+
+def registration_catalog() -> dict:
+    return {
+        "sectors": [
+            {
+                "value": row["value"].value,
+                "label": row["label"],
+                "group": row["group"],
+            }
+            for row in SECTOR_CATALOG
+        ],
+        "entity_types": [
+            {
+                "value": row["value"].value,
+                "label": row["label"],
+                "registration_fee": row["registration_fee"],
+                "blurb": row["blurb"],
+            }
+            for row in ENTITY_TYPE_CATALOG
+        ],
+        "registration_hours": REGISTRATION_HOURS,
+        "min_starting_capital": 0.0,
+        "max_starting_capital": 50000.0,
+    }
+
+
+async def has_business_permit(
+    db: AsyncSession, character: Character, state_id: int
+) -> bool:
+    if state_id == character.home_state_id:
+        return True
+    result = await db.execute(
+        select(Permit).where(
+            Permit.character_id == character.id,
+            Permit.state_id == state_id,
+            Permit.permit_type == PermitType.BUSINESS,
+            Permit.status == PermitStatus.ACTIVE,
+            Permit.expires_at > utcnow(),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def registration_preview(
+    db: AsyncSession,
+    character: Character,
+    *,
+    state_id: int,
+    entity_type: BusinessEntityType,
+    starting_capital: float = 0.0,
+) -> dict:
+    state = await db.get(State, state_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="State not found")
+    fee = _fee_for_entity(entity_type)
+    capital = max(0.0, round(float(starting_capital or 0), 2))
+    is_home = state_id == character.home_state_id
+    permit_ok = await has_business_permit(db, character, state_id)
+    total = round(fee + capital, 2)
+    return {
+        "state_id": state_id,
+        "state_name": state.name,
+        "is_home_state": is_home,
+        "permit_required": not is_home,
+        "permit_ok": permit_ok,
+        "entity_type": entity_type.value,
+        "registration_fee": fee,
+        "starting_capital": capital,
+        "total_due": total,
+        "registration_hours": REGISTRATION_HOURS,
+        "cash_on_hand": round(character.cash, 2),
+        "can_afford": character.cash >= total,
+    }
 
 
 async def register_business(
@@ -25,44 +113,70 @@ async def register_business(
     state_id: int,
     local_address: str,
     description: str | None,
+    entity_type: str = BusinessEntityType.SOLE_TRADER.value,
+    starting_capital: float = 0.0,
 ) -> Business:
     ensure_can_act(character)
+
+    try:
+        sector_enum = BusinessSector(sector)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid sector — choose from the business catalog",
+        ) from exc
+
+    try:
+        entity_enum = BusinessEntityType(entity_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid business type") from exc
+
+    capital = round(float(starting_capital or 0), 2)
+    if capital < 0:
+        raise HTTPException(status_code=400, detail="Starting capital cannot be negative")
+    if capital > 50000:
+        raise HTTPException(status_code=400, detail="Starting capital max is 50000")
 
     state = await db.get(State, state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="State not found")
 
     is_home = state_id == character.home_state_id
-    if not is_home:
-        result = await db.execute(
-            select(Permit).where(
-                Permit.character_id == character.id,
-                Permit.state_id == state_id,
-                Permit.permit_type == PermitType.BUSINESS,
-                Permit.status == PermitStatus.ACTIVE,
-                Permit.expires_at > utcnow(),
-            )
+    if not is_home and not await has_business_permit(db, character, state_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Business permit required to register outside home state",
         )
-        if result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=403,
-                detail="Business permit required to register outside home state",
-            )
 
-    if character.cash < REGISTRATION_FEE:
-        raise HTTPException(status_code=400, detail="Insufficient funds")
+    fee = _fee_for_entity(entity_enum)
+    total = round(fee + capital, 2)
+    if character.cash < total:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Need {total:.2f} cash (fee {fee:.2f} + capital {capital:.2f})",
+        )
 
     now = utcnow()
     completes = now + timedelta(hours=REGISTRATION_HOURS)
-    character.cash -= REGISTRATION_FEE
+    character.cash -= total
+    if fee > 0:
+        from app.services import treasury_service
+
+        await treasury_service.collect_fee(
+            db,
+            fee,
+            note=f"Business registration — {name}",
+            character_id=character.id,
+        )
 
     activity = Activity(
         character_id=character.id,
         activity_type=ActivityType.BUSINESS,
         status=ActivityStatus.IN_PROGRESS,
         title=f"Registering {name}",
+        description=f"{entity_enum.value.replace('_', ' ')} · {sector_enum.value}",
         age_gain_years=0,
-        cash_delta=-REGISTRATION_FEE,
+        cash_delta=-total,
         started_at=now,
         completes_at=completes,
     )
@@ -77,10 +191,11 @@ async def register_business(
         owner_id=character.id,
         state_id=state_id,
         name=name,
-        sector=sector,
+        sector=sector_enum.value,
+        entity_type=entity_enum.value,
         description=description,
         status=BusinessStatus.PENDING,
-        cash_balance=0,
+        cash_balance=capital,
         registration_completes_at=completes,
         local_address=local_address,
         is_home_state=is_home,
@@ -232,16 +347,30 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
                 * (settings.business_base_revenue_per_interval + staff_rev),
                 2,
             )
-            biz.cash_balance = round(biz.cash_balance + earned, 2)
-            biz.lifetime_revenue = round(biz.lifetime_revenue + earned, 2)
+            from app.services import treasury_service
+
+            tax_split = await treasury_service.take_corporate_tax(
+                db,
+                earned,
+                business_id=biz.id,
+                note=f"Corporate tax — {biz.name}",
+            )
+            net_earned = tax_split["net"]
+            biz.cash_balance = round(biz.cash_balance + net_earned, 2)
+            biz.lifetime_revenue = round(biz.lifetime_revenue + net_earned, 2)
             biz.last_ops_at = last_ops + timedelta(hours=ticks * interval)
-            summary["revenue"] += earned
+            summary["revenue"] += net_earned
             if earned > 0:
+                tax_note = (
+                    f" · tax ${tax_split['tax']:.2f}"
+                    if tax_split["tax"] > 0
+                    else ""
+                )
                 await notify_service.push(
                     db,
                     character.id,
-                    f"{biz.name} earned ${earned:.2f}",
-                    body=f"Company cash ${biz.cash_balance:.2f}",
+                    f"{biz.name} earned ${net_earned:.2f}",
+                    body=f"Company cash ${biz.cash_balance:.2f}{tax_note}",
                     category="business",
                     ref_type="business",
                     ref_id=biz.id,
@@ -261,20 +390,34 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
             biz.last_payroll_at = now
             summary["wages"] += paid
 
-            # Pay player employees their share
+            # Pay player employees their share (income tax withheld → treasury)
             if paid > 0 and wage_bill > 0:
+                from app.services import treasury_service
+
                 ratio = paid / wage_bill
                 for emp in employees:
                     if emp.character_id and emp.is_active:
                         worker = await db.get(Character, emp.character_id)
                         if worker:
                             cut = round(emp.wage_per_week * ratio, 2)
-                            worker.cash = round(worker.cash + cut, 2)
+                            pay = await treasury_service.pay_taxable_income(
+                                db,
+                                worker,
+                                cut,
+                                note=f"Income tax — payroll {biz.name}",
+                            )
                             await notify_service.push(
                                 db,
                                 worker.id,
                                 f"Payday from {biz.name}",
-                                body=f"+${cut:.2f}",
+                                body=(
+                                    f"+${pay['net']:.2f}"
+                                    + (
+                                        f" (tax ${pay['tax']:.2f})"
+                                        if pay["tax"] > 0
+                                        else ""
+                                    )
+                                ),
                                 category="job",
                             )
             await notify_service.push(

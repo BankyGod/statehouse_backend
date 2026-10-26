@@ -13,7 +13,8 @@ router = APIRouter(prefix="/cabinet", tags=["cabinet"])
 
 class AppointRequest(BaseModel):
     portfolio: str
-    character_id: int = Field(gt=0)
+    username: str = Field(min_length=1, max_length=64)
+    character_id: int | None = Field(default=None, gt=0)
 
 
 class PortfolioRequest(BaseModel):
@@ -42,7 +43,11 @@ async def appoint(
 ):
     character = await character_service.get_character_for_user(db, user)
     return await cabinet_service.appoint(
-        db, character, Portfolio(payload.portfolio), payload.character_id
+        db,
+        character,
+        Portfolio(payload.portfolio),
+        username=payload.username,
+        character_id=payload.character_id,
     )
 
 
