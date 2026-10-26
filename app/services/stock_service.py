@@ -84,6 +84,17 @@ def _bump_price(listing: StockListing, shares: int, *, buying: bool) -> None:
         listing.share_price = round(max(0.5, listing.share_price - impact), 4)
 
 
+async def _bump_and_record(
+    db: AsyncSession, listing: StockListing, shares: int, *, buying: bool
+) -> None:
+    from app.services import performance_service
+
+    _bump_price(listing, shares, buying=buying)
+    await performance_service.record_price_point(
+        db, listing, reason="trade_buy" if buying else "trade_sell"
+    )
+
+
 async def list_market(db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(StockListing)
@@ -163,35 +174,15 @@ async def ipo_business(
     if business.is_public:
         raise HTTPException(status_code=400, detail="Already publicly listed")
 
-    if business.cash_balance < settings.stock_ipo_min_business_cash:
+    from app.services import performance_service
+
+    readiness = await performance_service.ipo_checklist(db, character, business)
+    if not readiness["eligible"]:
+        failed = [c["label"] for c in readiness["checks"] if not c["ok"]]
         raise HTTPException(
             status_code=400,
-            detail=f"Need at least ${settings.stock_ipo_min_business_cash:.0f} business cash to IPO",
+            detail="Not ready to list: " + "; ".join(failed[:4]),
         )
-    if not business.registered_at:
-        raise HTTPException(status_code=400, detail="Business not fully registered")
-
-    reg = business.registered_at
-    if reg.tzinfo is None:
-        from datetime import timezone
-
-        reg = reg.replace(tzinfo=timezone.utc)
-    age_days = (utcnow() - reg).total_seconds() / 86400.0
-    if age_days < settings.stock_ipo_min_business_age_days:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Business must be at least {settings.stock_ipo_min_business_age_days} days old",
-        )
-
-    if character.reputation < settings.stock_ipo_min_owner_reputation:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Owner reputation must be ≥ {settings.stock_ipo_min_owner_reputation}",
-        )
-    if character.heat >= 30:
-        raise HTTPException(status_code=403, detail="Heat too high for IPO")
-    if character.criminal_record_summary:
-        raise HTTPException(status_code=403, detail="Criminal record blocks IPO")
 
     sym = symbol.strip().upper()
     if not _SYMBOL_RE.match(sym):
@@ -241,7 +232,7 @@ async def ipo_business(
         founder_shares=founder_shares,
         ipo_raised=0.0,
         listed_at=now,
-        is_booming=business.cash_balance >= settings.stock_ipo_min_business_cash * 2,
+        is_booming=readiness["metrics"]["performance_score"] >= 70,
     )
     db.add(listing)
     await db.flush()
@@ -253,6 +244,8 @@ async def ipo_business(
     business.is_public = True
     business.stock_listing_id = listing.id
     character.reputation += 10
+    await performance_service.record_price_point(db, listing, reason="ipo")
+    await performance_service.record_snapshot(db, business)
 
     await news_service.publish(
         db,
@@ -317,7 +310,7 @@ async def buy_shares(
 
     holding = await _ensure_holding(db, character.id, listing.id)
     _add_shares(holding, shares, price)
-    _bump_price(listing, shares, buying=True)
+    await _bump_and_record(db, listing, shares, buying=True)
 
     db.add(
         StockTrade(
@@ -380,7 +373,7 @@ async def sell_shares(
 
     listing.float_shares += shares
     character.cash = round(character.cash + net, 2)
-    _bump_price(listing, shares, buying=False)
+    await _bump_and_record(db, listing, shares, buying=False)
 
     db.add(
         StockTrade(
@@ -523,6 +516,13 @@ async def fill_sell_order(
     if order.shares_remaining <= 0:
         order.is_active = False
 
+    # Peer fills move the quoted market toward the traded price
+    listing.share_price = round(
+        listing.share_price * 0.7 + order.price_each * 0.3,
+        4,
+    )
+    listing.share_price = max(0.5, listing.share_price)
+
     db.add(
         StockTrade(
             listing_id=listing.id,
@@ -535,6 +535,9 @@ async def fill_sell_order(
             posted_at=utcnow(),
         )
     )
+    from app.services import performance_service
+
+    await performance_service.record_price_point(db, listing, reason="order_fill")
     await db.flush()
     return {
         "symbol": listing.symbol,
@@ -542,6 +545,7 @@ async def fill_sell_order(
         "price_each": order.price_each,
         "fee": fee,
         "total_paid": total,
+        "new_price": listing.share_price,
         "cash": character.cash,
         "note": "Peer order fill — seller paid; company not involved.",
     }
@@ -563,23 +567,26 @@ async def seed_government_listings(db: AsyncSession) -> int:
         ("UAEGY", "Amir Energy Board", 32.0, 40000, True),
         ("UAPRT", "Port Authority Bonds-Shares", 15.0, 20000, False),
     ]
+    from app.services import performance_service
+
     for symbol, name, price, shares, booming in gov:
-        db.add(
-            StockListing(
-                symbol=symbol,
-                name=name,
-                issuer_type=StockIssuerType.GOVERNMENT,
-                business_id=None,
-                description=f"Government-backed listing: {name}",
-                status=StockListingStatus.ACTIVE,
-                share_price=price,
-                total_shares=shares,
-                float_shares=shares,
-                founder_shares=0,
-                ipo_raised=0.0,
-                listed_at=now,
-                is_booming=booming,
-            )
+        listing = StockListing(
+            symbol=symbol,
+            name=name,
+            issuer_type=StockIssuerType.GOVERNMENT,
+            business_id=None,
+            description=f"Government-backed listing: {name}",
+            status=StockListingStatus.ACTIVE,
+            share_price=price,
+            total_shares=shares,
+            float_shares=shares,
+            founder_shares=0,
+            ipo_raised=0.0,
+            listed_at=now,
+            is_booming=booming,
         )
+        db.add(listing)
+        await db.flush()
+        await performance_service.record_price_point(db, listing, reason="seed")
     await db.flush()
     return len(gov)

@@ -11,10 +11,20 @@ from app.schemas.life import (
     BusinessCreate,
     BusinessOut,
     EmployeeOut,
+    EmployeeUpdateRequest,
     HireNpcRequest,
     HirePlayerRequest,
+    HousingListingOut,
+    RealEstateListingCreate,
+    RealEstateListingUpdate,
 )
-from app.services import business_service, character_service, employee_service
+from app.services import (
+    business_service,
+    character_service,
+    employee_service,
+    housing_service,
+    performance_service,
+)
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 
@@ -45,6 +55,12 @@ async def _to_out(db: AsyncSession, business: Business) -> BusinessOut:
 @router.get("/catalog")
 async def business_catalog():
     return business_service.registration_catalog()
+
+
+@router.get("/property-catalog")
+async def property_catalog():
+    """Real-estate inventory types (acquisition cost, bonuses, suggested prices)."""
+    return housing_service.property_catalog()
 
 
 @router.get("/preview")
@@ -161,6 +177,29 @@ async def hire_player_employee(
     )
 
 
+@router.patch(
+    "/{business_id}/employees/{employee_id}",
+    response_model=EmployeeOut,
+)
+async def update_business_employee(
+    business_id: int,
+    employee_id: int,
+    payload: EmployeeUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await employee_service.update_employee(
+        db,
+        character,
+        business_id,
+        employee_id,
+        role=payload.role,
+        wage_per_week=payload.wage_per_week,
+        display_name=payload.display_name,
+    )
+
+
 @router.delete("/{business_id}/employees/{employee_id}")
 async def fire_business_employee(
     business_id: int,
@@ -172,6 +211,17 @@ async def fire_business_employee(
     return await employee_service.fire_employee(
         db, character, business_id, employee_id
     )
+
+
+@router.get("/{business_id}/performance")
+async def business_performance(
+    business_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Owner dashboard: ops metrics, IPO checklist, and real stock price history."""
+    character = await character_service.get_character_for_user(db, user)
+    return await performance_service.performance_dashboard(db, character, business_id)
 
 
 @router.post("/{business_id}/deposit")
@@ -194,3 +244,64 @@ async def withdraw_cash(
 ):
     character = await character_service.get_character_for_user(db, user)
     return await business_service.withdraw(db, character, business_id, payload.amount)
+
+
+@router.get("/{business_id}/listings", response_model=list[HousingListingOut])
+async def business_housing_listings(
+    business_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Listings managed by a real estate company."""
+    character = await character_service.get_character_for_user(db, user)
+    return await housing_service.list_business_listings(db, character, business_id)
+
+
+@router.post(
+    "/{business_id}/listings",
+    response_model=HousingListingOut,
+    status_code=201,
+)
+async def create_business_listing(
+    business_id: int,
+    payload: RealEstateListingCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    listing = await housing_service.create_private_listing(
+        db,
+        character,
+        business_id,
+        property_type=payload.property_type,
+        units=payload.units,
+        offer_mode=payload.offer_mode,
+        title=payload.title,
+        description=payload.description,
+        weekly_rent=payload.weekly_rent,
+        buy_price=payload.buy_price,
+    )
+    await db.commit()
+    await db.refresh(listing)
+    return listing
+
+
+@router.patch("/{business_id}/listings/{listing_id}", response_model=HousingListingOut)
+async def update_business_listing(
+    business_id: int,
+    listing_id: int,
+    payload: RealEstateListingUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await housing_service.update_listing_prices(
+        db,
+        character,
+        business_id,
+        listing_id,
+        weekly_rent=payload.weekly_rent,
+        buy_price=payload.buy_price,
+        is_available=payload.is_available,
+        offer_mode=payload.offer_mode,
+    )

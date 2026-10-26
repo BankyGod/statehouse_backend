@@ -54,8 +54,13 @@ class Settings(BaseSettings):
     stock_ipo_min_owner_reputation: int = 5
     stock_ipo_min_shares: int = 1000
     stock_ipo_max_shares: int = 100000
+    stock_ipo_min_lifetime_revenue: float = 1500.0
+    stock_ipo_min_net_profit: float = 400.0  # revenue - wages
+    stock_ipo_min_employees: int = 2
+    stock_ipo_min_performance_score: float = 55.0
     stock_trade_fee_rate: float = 0.01  # 1% brokerage on secondary trades
     stock_price_impact: float = 0.002  # price moves slightly per trade volume
+    stock_ops_price_sensitivity: float = 0.04  # max ~4% move from one ops tick
 
     # Health
     health_regen_minutes: int = 10  # +1 HP when not hospitalized/sick
@@ -82,6 +87,11 @@ class Settings(BaseSettings):
     treasury_max_disburse: float = 5000.0  # per transfer by Finance/President
     min_national_tax_rate: float = 0.03
     max_national_tax_rate: float = 0.10
+    # Housing welfare (gov loan for basic shelter when broke)
+    housing_welfare_interest: float = 0.05
+    housing_welfare_term_days: float = 60.0
+    housing_welfare_repay_pct: float = 0.12  # 12% of each paycheck
+    housing_welfare_max: float = 800.0
 
     # Chat
     chat_max_length: int = 280

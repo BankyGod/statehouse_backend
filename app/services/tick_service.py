@@ -28,7 +28,10 @@ def apply_energy_regen(character: Character) -> int:
         last = last.replace(tzinfo=timezone.utc)
 
     elapsed = (now - last).total_seconds()
-    interval = settings.energy_regen_minutes * 60
+    # Better homes fill energy a little faster
+    bonus = int(getattr(character, "housing_energy_regen_bonus", 0) or 0)
+    minutes = max(1, int(settings.energy_regen_minutes) - bonus)
+    interval = minutes * 60
     if interval <= 0 or elapsed < interval:
         return 0
 

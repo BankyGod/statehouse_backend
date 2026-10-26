@@ -199,10 +199,16 @@ async def pay_taxable_income(
     *,
     note: str,
 ) -> dict:
-    """Credit net wages to character cash; income tax → treasury."""
+    """Credit net wages to character cash; income tax → treasury; garnish welfare loans."""
     gross = round(float(gross), 2)
     if gross <= 0:
-        return {"gross": 0.0, "tax": 0.0, "net": 0.0, "rate": 0.0}
+        return {
+            "gross": 0.0,
+            "tax": 0.0,
+            "net": 0.0,
+            "rate": 0.0,
+            "loan_repaid": 0.0,
+        }
     rate = await get_tax_rate(db, character)
     tax = round(gross * rate, 2)
     net = round(gross - tax, 2)
@@ -215,7 +221,49 @@ async def pay_taxable_income(
             note=note,
             character_id=character.id,
         )
-    return {"gross": gross, "tax": tax, "net": net, "rate": rate}
+
+    loan_repaid = 0.0
+    from app.models.loan import Loan, LoanKind, LoanStatus
+
+    result = await db.execute(
+        select(Loan).where(
+            Loan.character_id == character.id,
+            Loan.status == LoanStatus.ACTIVE,
+            Loan.auto_repay.is_(True),
+        )
+    )
+    for loan in result.scalars().all():
+        pct = float(loan.repay_pct_of_gross or 0)
+        if pct <= 0:
+            continue
+        take = round(min(gross * pct, loan.remaining, character.cash), 2)
+        if take <= 0:
+            continue
+        character.cash = round(float(character.cash) - take, 2)
+        loan.remaining = round(float(loan.remaining) - take, 2)
+        loan.payments_made = int(loan.payments_made or 0) + 1
+        loan_repaid = round(loan_repaid + take, 2)
+        if loan.loan_kind == LoanKind.HOUSING_WELFARE.value:
+            await credit(
+                db,
+                take,
+                TreasuryTxType.TRANSFER,
+                note=f"Housing welfare repayment — loan #{loan.id}",
+                character_id=character.id,
+            )
+        if loan.remaining <= 0.009:
+            loan.remaining = 0.0
+            loan.status = LoanStatus.PAID
+    if loan_repaid:
+        await db.flush()
+
+    return {
+        "gross": gross,
+        "tax": tax,
+        "net": round(net - loan_repaid, 2),
+        "rate": rate,
+        "loan_repaid": loan_repaid,
+    }
 
 
 async def take_corporate_tax(

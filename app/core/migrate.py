@@ -84,6 +84,47 @@ TRAVEL_LOG_COLUMNS_PG = {
     "carrier_name": "VARCHAR(128)",
 }
 
+HOUSING_LISTING_COLUMNS_SQLITE = {
+    "ownership": "VARCHAR(32) DEFAULT 'government'",
+    "owner_business_id": "INTEGER",
+    "property_type_slug": "VARCHAR(32)",
+    "offer_mode": "VARCHAR(16) DEFAULT 'both'",
+    "acquisition_cost_each": "FLOAT DEFAULT 0",
+    "units_total": "INTEGER",
+    "units_available": "INTEGER",
+    "happiness_bonus": "INTEGER DEFAULT 0",
+    "energy_regen_bonus_minutes": "INTEGER DEFAULT 0",
+}
+
+HOUSING_LISTING_COLUMNS_PG = {
+    "ownership": "VARCHAR(32) DEFAULT 'government'",
+    "owner_business_id": "INTEGER",
+    "property_type_slug": "VARCHAR(32)",
+    "offer_mode": "VARCHAR(16) DEFAULT 'both'",
+    "acquisition_cost_each": "DOUBLE PRECISION DEFAULT 0",
+    "units_total": "INTEGER",
+    "units_available": "INTEGER",
+    "happiness_bonus": "INTEGER DEFAULT 0",
+    "energy_regen_bonus_minutes": "INTEGER DEFAULT 0",
+}
+
+CHARACTER_HOUSING_BONUS_COLUMNS = {
+    "happiness": "INTEGER DEFAULT 50",
+    "housing_energy_regen_bonus": "INTEGER DEFAULT 0",
+}
+
+LOAN_COLUMNS_SQLITE = {
+    "loan_kind": "VARCHAR(32) DEFAULT 'standard'",
+    "auto_repay": "BOOLEAN DEFAULT 0",
+    "repay_pct_of_gross": "FLOAT DEFAULT 0",
+}
+
+LOAN_COLUMNS_PG = {
+    "loan_kind": "VARCHAR(32) DEFAULT 'standard'",
+    "auto_repay": "BOOLEAN DEFAULT FALSE",
+    "repay_pct_of_gross": "DOUBLE PRECISION DEFAULT 0",
+}
+
 
 async def _add_missing_sqlite(
     conn: AsyncConnection, table: str, columns: dict[str, str]
@@ -125,6 +166,9 @@ async def ensure_sqlite_columns(conn: AsyncConnection) -> None:
         conn, "education_enrollments", EDUCATION_ENROLLMENT_COLUMNS
     )
     await _add_missing_sqlite(conn, "travel_logs", TRAVEL_LOG_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "housing_listings", HOUSING_LISTING_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "loans", LOAN_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "characters", CHARACTER_HOUSING_BONUS_COLUMNS)
 
 
 async def ensure_postgres_columns(conn: AsyncConnection) -> None:
@@ -150,6 +194,9 @@ async def ensure_postgres_columns(conn: AsyncConnection) -> None:
         "businesses",
         {"entity_type": "VARCHAR(32) DEFAULT 'sole_trader'"},
     )
+    await _add_missing_pg(conn, "housing_listings", HOUSING_LISTING_COLUMNS_PG)
+    await _add_missing_pg(conn, "loans", LOAN_COLUMNS_PG)
+    await _add_missing_pg(conn, "characters", CHARACTER_HOUSING_BONUS_COLUMNS)
     # Backfill NPC office defaults if null
     await conn.execute(
         text(

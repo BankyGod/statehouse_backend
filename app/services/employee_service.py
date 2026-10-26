@@ -193,6 +193,48 @@ async def fire_employee(
     return {"id": emp.id, "message": f"{emp.display_name} was let go"}
 
 
+async def update_employee(
+    db: AsyncSession,
+    character: Character,
+    business_id: int,
+    employee_id: int,
+    *,
+    role: EmployeeRole | None = None,
+    wage_per_week: float | None = None,
+    display_name: str | None = None,
+) -> BusinessEmployee:
+    """Owner can change role, weekly wage, or display name for active staff."""
+    ensure_can_act(character)
+    business = await db.get(Business, business_id)
+    if business is None or business.owner_id != character.id:
+        raise HTTPException(status_code=404, detail="Business not found")
+    if business.status != BusinessStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Business is not active yet")
+    emp = await db.get(BusinessEmployee, employee_id)
+    if emp is None or emp.business_id != business_id or not emp.is_active:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    if role is not None:
+        emp.role = role
+        # Default wage to role band if wage not also provided
+        if wage_per_week is None:
+            emp.wage_per_week = ROLE_WAGES[role]
+    if wage_per_week is not None:
+        wage = round(float(wage_per_week), 2)
+        if wage <= 0:
+            raise HTTPException(status_code=400, detail="Wage must be positive")
+        emp.wage_per_week = wage
+    if display_name is not None:
+        name = display_name.strip()
+        if len(name) < 2:
+            raise HTTPException(status_code=400, detail="Display name too short")
+        emp.display_name = name[:64]
+
+    await db.flush()
+    await db.refresh(emp)
+    return emp
+
+
 async def seed_staff(
     db: AsyncSession, business_id: int, roster: list[tuple[str, EmployeeRole]]
 ) -> int:

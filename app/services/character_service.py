@@ -167,7 +167,21 @@ def ensure_not_hospitalized(character: Character) -> None:
         )
 
 
-def ensure_can_act(character: Character) -> None:
+def ensure_housed(character: Character) -> None:
+    """Basic needs: a place to live is required before most gameplay."""
+    if character.is_homeless or not character.active_residence_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Basic need unmet: you need a place to live before you can do that. "
+                "Use Housing to rent/buy, or request government housing assistance."
+            ),
+        )
+
+
+def ensure_can_act(character: Character, *, require_housing: bool = True) -> None:
     ensure_not_jailed(character)
     ensure_not_traveling(character)
     ensure_not_hospitalized(character)
+    if require_housing:
+        ensure_housed(character)

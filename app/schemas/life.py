@@ -281,8 +281,39 @@ class HousingListingOut(BaseModel):
     buy_price: float | None
     energy_bonus: int
     home_state_only: bool
+    ownership: str = "government"
+    owner_business_id: int | None = None
+    property_type_slug: str | None = None
+    offer_mode: str = "both"
+    acquisition_cost_each: float = 0.0
+    units_total: int | None = None
+    units_available: int | None = None
+    happiness_bonus: int = 0
+    energy_regen_bonus_minutes: int = 0
+    is_available: bool = True
 
     model_config = {"from_attributes": True}
+
+
+class RealEstateListingCreate(BaseModel):
+    property_type: str = Field(min_length=2, max_length=32)
+    units: int = Field(default=1, ge=1, le=50)
+    offer_mode: str = Field(default="both", pattern="^(rent|sale|both)$")
+    title: str | None = Field(default=None, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    weekly_rent: float | None = Field(default=None, ge=0)
+    buy_price: float | None = Field(default=None, ge=0)
+
+
+class RealEstateListingUpdate(BaseModel):
+    weekly_rent: float | None = Field(default=None, ge=0)
+    buy_price: float | None = None
+    is_available: bool | None = None
+    offer_mode: str | None = Field(default=None, pattern="^(rent|sale|both)$")
+
+
+class HousingAssistRequest(BaseModel):
+    listing_id: int | None = None
 
 
 class ResidenceOut(BaseModel):
@@ -335,6 +366,12 @@ class HirePlayerRequest(BaseModel):
     display_name: str = Field(min_length=3, max_length=64)
     role: EmployeeRole = EmployeeRole.CLERK
     wage_per_week: float | None = Field(default=None, gt=0)
+
+
+class EmployeeUpdateRequest(BaseModel):
+    role: EmployeeRole | None = None
+    wage_per_week: float | None = Field(default=None, gt=0, le=5000)
+    display_name: str | None = Field(default=None, min_length=2, max_length=64)
 
 
 class GymTrainRequest(BaseModel):

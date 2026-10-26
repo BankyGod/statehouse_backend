@@ -10,7 +10,7 @@ from app.schemas.life import (
     StockOrderFillRequest,
     StockTradeRequest,
 )
-from app.services import character_service, stock_service
+from app.services import character_service, performance_service, stock_service
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -18,6 +18,17 @@ router = APIRouter(prefix="/stocks", tags=["stocks"])
 @router.get("/market")
 async def market(db: AsyncSession = Depends(get_db)):
     return {"listings": await stock_service.list_market(db)}
+
+
+@router.get("/listings/{listing_id}/history")
+async def listing_history(
+    listing_id: int,
+    limit: int = Query(default=120, ge=10, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real share-price ticks from trades and company ops."""
+    points = await performance_service.listing_price_history(db, listing_id, limit=limit)
+    return {"listing_id": listing_id, "points": points}
 
 
 @router.get("/portfolio")

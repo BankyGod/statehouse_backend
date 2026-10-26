@@ -68,7 +68,7 @@ async def apply_savings_interest(db: AsyncSession, character: Character) -> floa
 
 
 async def deposit(db: AsyncSession, character: Character, amount: float) -> dict:
-    ensure_can_act(character)
+    ensure_can_act(character, require_housing=False)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     if character.cash < amount:
@@ -85,7 +85,7 @@ async def deposit(db: AsyncSession, character: Character, amount: float) -> dict
 
 
 async def withdraw(db: AsyncSession, character: Character, amount: float) -> dict:
-    ensure_can_act(character)
+    ensure_can_act(character, require_housing=False)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
     if character.bank_balance < amount:
@@ -105,7 +105,7 @@ async def transfer(
     db: AsyncSession, character: Character, to_display_name: str, amount: float
 ) -> dict:
     """Bank-to-bank transfer between players (fee deducted from sender bank)."""
-    ensure_can_act(character)
+    ensure_can_act(character, require_housing=False)
     settings = get_settings()
     if amount < settings.bank_min_transfer:
         raise HTTPException(

@@ -4,7 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.life import HousingListingOut, HousingMoveRequest, ResidenceOut
+from app.schemas.life import (
+    HousingAssistRequest,
+    HousingListingOut,
+    HousingMoveRequest,
+    ResidenceOut,
+)
 from app.services import character_service, housing_service
 
 router = APIRouter(prefix="/housing", tags=["housing"])
@@ -57,3 +62,19 @@ async def leave(
 ):
     character = await character_service.get_character_for_user(db, user)
     return await housing_service.leave_residence(db, character)
+
+
+@router.post("/assist")
+async def housing_assist(
+    payload: HousingAssistRequest | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Government housing assistance + welfare loan if you cannot afford rent."""
+    character = await character_service.get_character_for_user(db, user)
+    listing_id = payload.listing_id if payload else None
+    result = await housing_service.request_housing_assistance(
+        db, character, listing_id=listing_id
+    )
+    await db.commit()
+    return result

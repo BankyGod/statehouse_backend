@@ -36,6 +36,11 @@ class ResidenceStatus(str, enum.Enum):
     LEFT = "left"
 
 
+class HousingOwnership(str, enum.Enum):
+    GOVERNMENT = "government"
+    PRIVATE = "private"
+
+
 class HousingListing(Base, TimestampMixin):
     __tablename__ = "housing_listings"
 
@@ -49,6 +54,24 @@ class HousingListing(Base, TimestampMixin):
     energy_bonus: Mapped[int] = mapped_column(Integer, default=0)
     home_state_only: Mapped[bool] = mapped_column(Boolean, default=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    ownership: Mapped[str] = mapped_column(
+        String(32), default=HousingOwnership.GOVERNMENT.value, index=True
+    )
+    # Real-estate company that collects rent / sale proceeds (null = government treasury)
+    owner_business_id: Mapped[int | None] = mapped_column(
+        ForeignKey("businesses.id"), nullable=True, index=True
+    )
+    # Private inventory: company paid acquisition_cost * units_total to stock this listing
+    property_type_slug: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    offer_mode: Mapped[str] = mapped_column(
+        String(16), default="both"
+    )  # rent | sale | both
+    acquisition_cost_each: Mapped[float] = mapped_column(Float, default=0.0)
+    units_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    units_available: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    happiness_bonus: Mapped[int] = mapped_column(Integer, default=0)
+    # Subtracted from energy_regen_minutes while living here (faster refill)
+    energy_regen_bonus_minutes: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Residence(Base, TimestampMixin):

@@ -288,11 +288,22 @@ async def withdraw(
     if business.cash_balance < amount:
         raise HTTPException(status_code=400, detail="Insufficient business cash")
     business.cash_balance = round(business.cash_balance - amount, 2)
-    character.cash = round(character.cash + amount, 2)
+    from app.services import treasury_service
+
+    # Owner draw is taxable personal income
+    pay = await treasury_service.pay_taxable_income(
+        db,
+        character,
+        amount,
+        note=f"Income tax — draw from {business.name}",
+    )
     await db.flush()
     return {
         "business_id": business.id,
         "withdrawn": amount,
+        "gross": pay["gross"],
+        "tax": pay["tax"],
+        "net": pay["net"],
         "business_cash": business.cash_balance,
         "cash": character.cash,
     }
@@ -321,6 +332,7 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
         )
     )
     summary = {"revenue": 0.0, "wages": 0.0, "businesses": 0}
+    from app.services import performance_service
 
     for biz in result.scalars().all():
         summary["businesses"] += 1
@@ -331,6 +343,8 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
             )
         )
         employees = list(emps_result.scalars().all())
+        interval_rev = 0.0
+        interval_wages = 0.0
 
         last_ops = biz.last_ops_at or biz.registered_at or now
         if last_ops.tzinfo is None:
@@ -341,12 +355,18 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
         interval = settings.business_ops_interval_hours
         if hours >= interval:
             ticks = int(hours // interval)
+            sector = biz.sector.value if hasattr(biz.sector, "value") else str(biz.sector)
+            # Real estate earns from actual rents/sales (credited on housing events).
+            # Ops only add a small management fee from staff activity.
             staff_rev = _employee_revenue(employees)
-            earned = round(
-                ticks
-                * (settings.business_base_revenue_per_interval + staff_rev),
-                2,
-            )
+            if sector == BusinessSector.REAL_ESTATE.value:
+                earned = round(ticks * (staff_rev * 0.35), 2)
+            else:
+                earned = round(
+                    ticks
+                    * (settings.business_base_revenue_per_interval + staff_rev),
+                    2,
+                )
             from app.services import treasury_service
 
             tax_split = await treasury_service.take_corporate_tax(
@@ -360,16 +380,22 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
             biz.lifetime_revenue = round(biz.lifetime_revenue + net_earned, 2)
             biz.last_ops_at = last_ops + timedelta(hours=ticks * interval)
             summary["revenue"] += net_earned
+            interval_rev += net_earned
             if earned > 0:
                 tax_note = (
                     f" · tax ${tax_split['tax']:.2f}"
                     if tax_split["tax"] > 0
                     else ""
                 )
+                label = (
+                    "management fees"
+                    if sector == BusinessSector.REAL_ESTATE.value
+                    else "earned"
+                )
                 await notify_service.push(
                     db,
                     character.id,
-                    f"{biz.name} earned ${net_earned:.2f}",
+                    f"{biz.name} {label} ${net_earned:.2f}",
                     body=f"Company cash ${biz.cash_balance:.2f}{tax_note}",
                     category="business",
                     ref_type="business",
@@ -389,6 +415,7 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
             biz.lifetime_wages = round(biz.lifetime_wages + paid, 2)
             biz.last_payroll_at = now
             summary["wages"] += paid
+            interval_wages += paid
 
             # Pay player employees their share (income tax withheld → treasury)
             if paid > 0 and wage_bill > 0:
@@ -430,6 +457,20 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
                     else f"Shortfall — owed ${wage_bill - paid:.2f}"
                 ),
                 category="business",
+            )
+
+        if interval_rev > 0 or interval_wages > 0:
+            await performance_service.record_snapshot(
+                db,
+                biz,
+                interval_revenue=interval_rev,
+                interval_wages=interval_wages,
+            )
+            await performance_service.apply_ops_to_stock_price(
+                db,
+                biz,
+                interval_revenue=interval_rev,
+                interval_wages=interval_wages,
             )
 
     await db.flush()

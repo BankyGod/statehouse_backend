@@ -83,6 +83,8 @@ async def seed_housing(db: AsyncSession) -> int:
             buy_price = None
             if template.get("buy_price_factor"):
                 buy_price = round(income * template["buy_price_factor"], 2)
+            from app.models.housing import HousingOwnership
+
             db.add(
                 HousingListing(
                     state_id=state.id,
@@ -94,6 +96,8 @@ async def seed_housing(db: AsyncSession) -> int:
                     energy_bonus=template["energy_bonus"],
                     home_state_only=template["home_state_only"],
                     is_available=True,
+                    ownership=HousingOwnership.GOVERNMENT.value,
+                    owner_business_id=None,
                 )
             )
             created += 1

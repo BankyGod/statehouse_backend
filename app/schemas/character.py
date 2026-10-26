@@ -30,6 +30,8 @@ class CharacterOut(BaseModel):
     travel_destination_id: int | None
     is_homeless: bool
     active_residence_id: int | None
+    happiness: int = 50
+    housing_energy_regen_bonus: int = 0
     health: int
     max_health: int
     is_hospitalized: bool

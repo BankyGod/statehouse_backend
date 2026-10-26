@@ -66,6 +66,9 @@ class Character(Base, TimestampMixin):
     is_homeless: Mapped[bool] = mapped_column(Boolean, default=True)
     active_residence_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     base_max_energy: Mapped[int] = mapped_column(Integer, default=100)
+    happiness: Mapped[int] = mapped_column(Integer, default=50)
+    # Faster energy regen while in a better home (minutes shaved off interval)
+    housing_energy_regen_bonus: Mapped[int] = mapped_column(Integer, default=0)
     # Health
     health: Mapped[int] = mapped_column(Integer, default=100)
     max_health: Mapped[int] = mapped_column(Integer, default=100)

@@ -1,6 +1,7 @@
 from app.models.activity import Activity
 from app.models.bank import BankTransaction
 from app.models.business import Business
+from app.models.performance import BusinessPerformanceSnapshot, StockPricePoint
 from app.models.cabinet import CabinetSeat
 from app.models.character import Character
 from app.models.chat import ChatMessage
@@ -50,6 +51,8 @@ __all__ = [
     "StateEnterprise",
     "TransportCarrier",
     "Business",
+    "BusinessPerformanceSnapshot",
+    "StockPricePoint",
     "BusinessEmployee",
     "Permit",
     "CrimeAttempt",

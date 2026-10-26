@@ -125,7 +125,8 @@ Torn-style: top bar with cash / energy / age / heat, plus notifications.
 9. **Stocks (separate)** — gov + business IPOs; buy/sell shares; investors exit only by selling  
 10. **Energy regen** — 1 energy every 5 minutes (on `/characters/me` tick)  
 11. **Heat decay** — slowly drops while free  
-12. **Housing** — free home-state hostel on create; rent/buy; weekly rent auto-pay; eviction  
+12. **Housing** — free gov hostel on create; rent/buy pay landlord (gov treasury or real-estate company); **homeless blocks most actions**; welfare assist loan repaid from wages  
+
 13. **Health** — HP, clinic heal, hospital stay (locks actions), crime injuries, slow regen  
 14. **Politics (optional)** — 20-seat parliament, elections, MP + presidential candidacy & voting  
 15. **Legislation** — MPs propose/vote bills; budget readings; presidential veto  
@@ -472,11 +473,19 @@ Housing:
 
 | Method | Path |
 |---|---|
-| GET | `/api/housing/listings?state_id=` |
+| GET | `/api/housing/listings?state_id=` | includes `ownership`, `owner_business_id` |
 | GET | `/api/housing/me` |
-| POST | `/api/housing/rent` | `{ listing_id }` |
+| POST | `/api/housing/rent` | `{ listing_id }` — rent → company or treasury |
 | POST | `/api/housing/buy` | `{ listing_id }` |
-| POST | `/api/housing/leave` |
+| POST | `/api/housing/leave` | makes you homeless (blocks play until rehoused) |
+| POST | `/api/housing/assist` | `{ listing_id? }` gov message + welfare loan if broke, then houses you |
+| GET | `/api/businesses/property-catalog` | property types + acquisition costs + bonuses |
+| GET | `/api/businesses/{id}/listings` | real-estate company portfolio |
+| POST | `/api/businesses/{id}/listings` | `{ property_type, units, offer_mode, weekly_rent?, buy_price? }` — company pays acquisition × units |
+| PATCH | `/api/businesses/{id}/listings/{listing_id}` | change rent / buy / availability / offer_mode |
+
+**Basic needs:** `is_homeless` → most actions return 403 until housed (housing, bank, travel, assist still allowed).  
+**Real estate companies** earn from actual tenant rent/sales (corp tax withheld); management fee on ops tick is small. Owner draws are income-taxed.
 
 Notes: must be **in** the listing’s state to rent/buy (travel first). Better homes raise `max_energy`. Weekly rent auto-deducts from cash then bank; 2 misses → eviction.
 
