@@ -157,7 +157,6 @@ async def hire_npc_employee(
 
 @router.post(
     "/{business_id}/employees/hire-player",
-    response_model=EmployeeOut,
     status_code=201,
 )
 async def hire_player_employee(
@@ -172,9 +171,36 @@ async def hire_player_employee(
         character,
         business_id,
         display_name=payload.display_name,
+        character_id=payload.character_id,
         role=payload.role,
         wage_per_week=payload.wage_per_week,
+        message=payload.message,
     )
+
+
+@router.get("/{business_id}/invites")
+async def list_business_invites(
+    business_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return {
+        "invites": await employee_service.list_outgoing_invites(
+            db, character, business_id
+        )
+    }
+
+
+@router.post("/{business_id}/invites/{invite_id}/cancel")
+async def cancel_business_invite(
+    business_id: int,
+    invite_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await employee_service.cancel_invite(db, character, business_id, invite_id)
 
 
 @router.patch(
@@ -273,6 +299,7 @@ async def create_business_listing(
         db,
         character,
         business_id,
+        state_id=payload.state_id,
         property_type=payload.property_type,
         units=payload.units,
         offer_mode=payload.offer_mode,

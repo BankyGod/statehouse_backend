@@ -11,7 +11,7 @@ from app.models.education import (
     EducationInstitution,
     EducationProgram,
 )
-from app.models.employee import BusinessEmployee
+from app.models.employee import BusinessEmployee, JobInvite
 from app.models.enterprise import StateEnterprise
 from app.models.transport import TransportCarrier
 from app.models.housing import HousingListing, Residence
@@ -54,6 +54,7 @@ __all__ = [
     "BusinessPerformanceSnapshot",
     "StockPricePoint",
     "BusinessEmployee",
+    "JobInvite",
     "Permit",
     "CrimeAttempt",
     "CriminalRecord",

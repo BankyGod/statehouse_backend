@@ -24,8 +24,12 @@ from app.services import notify_service
 
 
 async def _get_by_name(db: AsyncSession, display_name: str) -> Character:
+    from sqlalchemy import func
+
     result = await db.execute(
-        select(Character).where(Character.display_name == display_name)
+        select(Character).where(
+            func.lower(Character.display_name) == display_name.strip().lower()
+        )
     )
     target = result.scalar_one_or_none()
     if target is None:
@@ -246,26 +250,86 @@ async def attack(
 
 
 async def send_dm(
-    db: AsyncSession, character: Character, to_display_name: str, body: str
+    db: AsyncSession,
+    character: Character,
+    to_display_name: str,
+    body: str,
+    *,
+    subject: str | None = None,
 ) -> DirectMessage:
     ensure_can_act(character)
     target = await _get_by_name(db, to_display_name)
+    return await send_mail(
+        db,
+        character,
+        to_character_id=target.id,
+        body=body,
+        subject=subject,
+        business_id=None,
+    )
+
+
+async def send_mail(
+    db: AsyncSession,
+    character: Character,
+    *,
+    to_character_id: int | None = None,
+    to_display_name: str | None = None,
+    body: str,
+    subject: str | None = None,
+    business_id: int | None = None,
+) -> DirectMessage:
+    """Player↔player or company→player mailbox message."""
+    from app.models.business import Business
+
+    ensure_can_act(character)
+    target: Character | None = None
+    if to_character_id is not None:
+        target = await db.get(Character, int(to_character_id))
+    elif to_display_name:
+        target = await _get_by_name(db, to_display_name)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Recipient not found")
     if target.id == character.id:
         raise HTTPException(status_code=400, detail="Cannot message yourself")
+
+    biz_name = None
+    if business_id is not None:
+        business = await db.get(Business, int(business_id))
+        if business is None or business.owner_id != character.id:
+            raise HTTPException(
+                status_code=403, detail="You do not own that company mailbox"
+            )
+        biz_name = business.name
+
+    text = (body or "").strip()
+    if len(text) < 1:
+        raise HTTPException(status_code=400, detail="Message body required")
+    subj = (subject or "").strip()[:128] or None
+
     msg = DirectMessage(
         from_character_id=character.id,
         to_character_id=target.id,
-        body=body.strip()[:500],
+        business_id=business_id,
+        subject=subj,
+        body=text[:500],
         is_read=False,
         posted_at=utcnow(),
     )
     db.add(msg)
+    title = (
+        f"Mail from {biz_name}"
+        if biz_name
+        else f"Mail from {character.display_name}"
+    )
     await notify_service.push(
         db,
         target.id,
-        f"DM from {character.display_name}",
-        body=body[:80],
-        category="dm",
+        title,
+        body=(subj + " — " if subj else "") + text[:80],
+        category="mail",
+        ref_type="dm",
+        ref_id=None,
     )
     await db.flush()
     await db.refresh(msg)
@@ -273,8 +337,15 @@ async def send_dm(
 
 
 async def list_dms(
-    db: AsyncSession, character_id: int, *, with_name: str | None = None, limit: int = 50
+    db: AsyncSession,
+    character_id: int,
+    *,
+    with_name: str | None = None,
+    limit: int = 50,
+    mark_read: bool = True,
 ) -> list[dict]:
+    from app.models.business import Business
+
     stmt = (
         select(DirectMessage)
         .where(
@@ -300,17 +371,27 @@ async def list_dms(
                 continue
         fr = await db.get(Character, m.from_character_id)
         to = await db.get(Character, m.to_character_id)
+        biz_name = None
+        if getattr(m, "business_id", None):
+            biz = await db.get(Business, m.business_id)
+            biz_name = biz.name if biz else None
         rows.append(
             {
                 "id": m.id,
+                "from_character_id": m.from_character_id,
+                "to_character_id": m.to_character_id,
                 "from": fr.display_name if fr else m.from_character_id,
                 "to": to.display_name if to else m.to_character_id,
+                "business_id": getattr(m, "business_id", None),
+                "business_name": biz_name,
+                "subject": getattr(m, "subject", None),
                 "body": m.body,
                 "is_read": m.is_read,
+                "direction": "in" if m.to_character_id == character_id else "out",
                 "posted_at": m.posted_at,
             }
         )
-        if m.to_character_id == character_id and not m.is_read:
+        if mark_read and m.to_character_id == character_id and not m.is_read:
             m.is_read = True
     await db.flush()
     return rows

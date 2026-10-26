@@ -62,6 +62,11 @@ class DirectMessage(Base, TimestampMixin):
     to_character_id: Mapped[int] = mapped_column(
         ForeignKey("characters.id", ondelete="CASCADE"), index=True
     )
+    # Optional company sender (owner writing on behalf of the firm)
+    business_id: Mapped[int | None] = mapped_column(
+        ForeignKey("businesses.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    subject: Mapped[str | None] = mapped_column(String(128), nullable=True)
     body: Mapped[str] = mapped_column(String(500))
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

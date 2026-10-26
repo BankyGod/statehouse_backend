@@ -465,6 +465,7 @@ async def create_private_listing(
     character: Character,
     business_id: int,
     *,
+    state_id: int,
     property_type: str,
     units: int = 1,
     offer_mode: str = "both",
@@ -475,14 +476,34 @@ async def create_private_listing(
 ) -> HousingListing:
     """
     Company buys `units` of a property type (pays acquisition from company cash),
-    then lists them for rent and/or sale at the prices you set.
+    then lists them for rent and/or sale at the prices you set in a chosen state.
+    Operating outside the owner's home state requires an active business permit.
     """
+    from app.models.state import State
     from app.seed.property_catalog import property_type_by_slug
+    from app.services import business_service
 
     biz = await _require_real_estate_business(db, character, business_id)
     meta = property_type_by_slug(property_type)
     if meta is None:
         raise HTTPException(status_code=400, detail="Unknown property type")
+
+    target_state_id = int(state_id)
+    state = await db.get(State, target_state_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="State not found")
+
+    # Home soil is free; other states need a business permit to own/list property
+    if not await business_service.has_business_permit(
+        db, character, target_state_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Business permit required to operate property in {state.name}. "
+                "Apply for a business permit for that state before listing there."
+            ),
+        )
 
     units = int(units)
     if units < 1 or units > 50:
@@ -540,7 +561,7 @@ async def create_private_listing(
 
     default_title = f"{meta['label']} — {biz.name}"
     listing = HousingListing(
-        state_id=biz.state_id,
+        state_id=target_state_id,
         title=(title or default_title).strip()[:128],
         kind=kind_enum,
         description=(

@@ -211,6 +211,9 @@ async def tick_character(db: AsyncSession, character: Character) -> Character:
     await education_service.complete_due_education(db, character)
     await business_service.activate_due_businesses(db, character)
     await business_service.process_business_ops(db, character)
+    from app.services import job_service
+
+    await job_service.clear_state_job_if_company_employed(db, character)
     await housing_service.process_rent(db, character)
     await tick_world_if_due(db)
     await bank_service.apply_savings_interest(db, character)

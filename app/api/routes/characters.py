@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.character import CharacterCreate, CharacterOut, HomeStateResetRequest
-from app.services import bank_service, character_service
+from app.services import bank_service, character_service, identity_service
 
 router = APIRouter(prefix="/characters", tags=["characters"])
 
@@ -17,6 +17,30 @@ async def create_character(
     db: AsyncSession = Depends(get_db),
 ):
     return await character_service.create_character(db, user, payload)
+
+
+@router.get("/check-name")
+async def check_name(
+    q: str = Query(..., min_length=1, max_length=64),
+    db: AsyncSession = Depends(get_db),
+):
+    """Public: is this username/display name free?"""
+    return await identity_service.check_name_availability(db, q)
+
+
+@router.get("/search")
+async def search_characters(
+    q: str = Query(..., min_length=1, max_length=64),
+    limit: int = Query(default=12, ge=1, le=25),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find players by display name, username, or character id (#)."""
+    me = await character_service.get_character_for_user(db, user)
+    results = await identity_service.search_players(
+        db, q, exclude_character_id=me.id, limit=limit
+    )
+    return {"results": results}
 
 
 @router.get("/me", response_model=CharacterOut)

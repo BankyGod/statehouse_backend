@@ -14,6 +14,7 @@ from app.api.routes import (
     government,
     gym,
     housing,
+    inbox,
     inventory,
     jail,
     jobs,
@@ -58,3 +59,4 @@ api_router.include_router(gym.router)
 api_router.include_router(inventory.router)
 api_router.include_router(jail.router)
 api_router.include_router(social.router)
+api_router.include_router(inbox.router)

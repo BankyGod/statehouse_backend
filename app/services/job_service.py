@@ -7,10 +7,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.game_time import utcnow
 from app.models.activity import Activity, ActivityStatus, ActivityType
 from app.models.character import Character
+from app.models.employee import BusinessEmployee
 from app.models.job import Job, JobListing
 from app.models.permit import Permit, PermitStatus, PermitType
 from app.services.character_service import ensure_can_act, ensure_energy
 from app.services.education_service import get_highest_education_level
+
+
+async def get_company_employment(
+    db: AsyncSession, character_id: int
+) -> BusinessEmployee | None:
+    result = await db.execute(
+        select(BusinessEmployee).where(
+            BusinessEmployee.character_id == character_id,
+            BusinessEmployee.is_active.is_(True),
+            BusinessEmployee.is_npc.is_(False),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def clear_state_job_if_company_employed(
+    db: AsyncSession, character: Character
+) -> bool:
+    """
+    Company payroll is exclusive with state jobs.
+    If the player is on a company roster, end any leftover state Job.
+    """
+    company = await get_company_employment(db, character.id)
+    if company is None:
+        return False
+    return await resign_current_job(db, character)
 
 
 async def list_jobs_in_state(db: AsyncSession, state_id: int) -> list[JobListing]:
@@ -66,6 +93,16 @@ async def hire(
     if listing.requires_clean_record and character.criminal_record_summary:
         raise HTTPException(status_code=400, detail="Clean criminal record required")
 
+    company = await get_company_employment(db, character.id)
+    if company is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You already work for a private company. Leave that payroll before "
+                "taking a state job."
+            ),
+        )
+
     existing = await db.execute(
         select(Job).where(Job.character_id == character.id, Job.is_active.is_(True))
     )
@@ -88,8 +125,31 @@ async def hire(
     return job
 
 
+async def resign_current_job(db: AsyncSession, character: Character) -> bool:
+    """End active state employment if any. Returns True if a job was closed."""
+    result = await db.execute(
+        select(Job).where(Job.character_id == character.id, Job.is_active.is_(True))
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return False
+    job.is_active = False
+    await db.flush()
+    return True
+
+
 async def work_shift(db: AsyncSession, character: Character) -> dict:
     ensure_can_act(character)
+    # Company staff cannot keep working an old state listing
+    if await clear_state_job_if_company_employed(db, character):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You work for a private company now — your previous state job was ended. "
+                "You earn wages from company payroll, not state shifts."
+            ),
+        )
+
     result = await db.execute(
         select(Job).where(Job.character_id == character.id, Job.is_active.is_(True))
     )

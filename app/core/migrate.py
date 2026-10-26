@@ -169,6 +169,14 @@ async def ensure_sqlite_columns(conn: AsyncConnection) -> None:
     await _add_missing_sqlite(conn, "housing_listings", HOUSING_LISTING_COLUMNS_SQLITE)
     await _add_missing_sqlite(conn, "loans", LOAN_COLUMNS_SQLITE)
     await _add_missing_sqlite(conn, "characters", CHARACTER_HOUSING_BONUS_COLUMNS)
+    await _add_missing_sqlite(
+        conn,
+        "direct_messages",
+        {
+            "business_id": "INTEGER",
+            "subject": "VARCHAR(128)",
+        },
+    )
 
 
 async def ensure_postgres_columns(conn: AsyncConnection) -> None:
@@ -197,6 +205,14 @@ async def ensure_postgres_columns(conn: AsyncConnection) -> None:
     await _add_missing_pg(conn, "housing_listings", HOUSING_LISTING_COLUMNS_PG)
     await _add_missing_pg(conn, "loans", LOAN_COLUMNS_PG)
     await _add_missing_pg(conn, "characters", CHARACTER_HOUSING_BONUS_COLUMNS)
+    await _add_missing_pg(
+        conn,
+        "direct_messages",
+        {
+            "business_id": "INTEGER",
+            "subject": "VARCHAR(128)",
+        },
+    )
     # Backfill NPC office defaults if null
     await conn.execute(
         text(

@@ -41,11 +41,11 @@ async def create_character(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Character already exists")
 
-    name_taken = await db.execute(
-        select(Character).where(Character.display_name == payload.display_name)
+    from app.services import identity_service
+
+    display_name = await identity_service.assert_public_name_available(
+        db, payload.display_name
     )
-    if name_taken.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Display name taken")
 
     state = await db.get(State, payload.home_state_id)
     if state is None:
@@ -57,7 +57,7 @@ async def create_character(
     now = utcnow()
     character = Character(
         user_id=user.id,
-        display_name=payload.display_name,
+        display_name=display_name,
         home_state_id=state.id,
         current_state_id=state.id,
         home_state_locked=False,

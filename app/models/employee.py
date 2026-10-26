@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -14,6 +14,13 @@ class EmployeeRole(str, enum.Enum):
     SPECIALIST = "specialist"
     MANAGER = "manager"
     EXECUTIVE = "executive"
+
+
+class JobInviteStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
 
 
 class BusinessEmployee(Base, TimestampMixin):
@@ -33,3 +40,30 @@ class BusinessEmployee(Base, TimestampMixin):
     is_npc: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     hired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobInvite(Base, TimestampMixin):
+    """Company job offer — worker must accept before joining payroll."""
+
+    __tablename__ = "job_invites"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True
+    )
+    from_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
+    to_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[EmployeeRole] = mapped_column(Enum(EmployeeRole))
+    wage_per_week: Mapped[float] = mapped_column(Float)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[JobInviteStatus] = mapped_column(
+        Enum(JobInviteStatus), default=JobInviteStatus.PENDING, index=True
+    )
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

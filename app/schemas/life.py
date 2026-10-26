@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.crime import CrimeType
 from app.models.education import EducationTrack
@@ -296,6 +296,7 @@ class HousingListingOut(BaseModel):
 
 
 class RealEstateListingCreate(BaseModel):
+    state_id: int
     property_type: str = Field(min_length=2, max_length=32)
     units: int = Field(default=1, ge=1, le=50)
     offer_mode: str = Field(default="both", pattern="^(rent|sale|both)$")
@@ -363,9 +364,19 @@ class BusinessCashRequest(BaseModel):
 
 
 class HirePlayerRequest(BaseModel):
-    display_name: str = Field(min_length=3, max_length=64)
+    display_name: str | None = Field(default=None, min_length=3, max_length=64)
+    character_id: int | None = Field(default=None, gt=0)
     role: EmployeeRole = EmployeeRole.CLERK
     wage_per_week: float | None = Field(default=None, gt=0)
+    message: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def require_target(self):
+        if self.character_id is None and not (
+            self.display_name and self.display_name.strip()
+        ):
+            raise ValueError("Provide character_id or display_name")
+        return self
 
 
 class EmployeeUpdateRequest(BaseModel):

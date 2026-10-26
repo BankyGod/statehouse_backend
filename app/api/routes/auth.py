@@ -21,17 +21,21 @@ class NeonExchangeRequest(BaseModel):
 
 @router.post("/register", response_model=UserOut, status_code=201)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(
-        select(User).where(
-            (User.email == payload.email) | (User.username == payload.username)
-        )
+    from app.services import identity_service
+
+    email_taken = await db.execute(
+        select(User).where(User.email == payload.email.lower())
     )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email or username already registered")
+    if email_taken.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    username = await identity_service.assert_public_name_available(
+        db, payload.username
+    )
 
     user = User(
         email=payload.email.lower(),
-        username=payload.username.lower(),
+        username=username.lower(),
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
