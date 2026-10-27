@@ -49,8 +49,88 @@ async def _npc_mp_count(db: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+def _infer_bill_effect(title: str, summary: str) -> tuple[str | None, float | None]:
+    """Map common bill language to living-world effects."""
+    text = f"{title} {summary}".lower()
+    if any(w in text for w in ("police", "crime", "security", "catch")):
+        return "crime_catch_delta", 0.03
+    if any(w in text for w in ("tax cut", "tax relief", "lower tax")):
+        return "national_tax_delta", -0.005
+    if any(w in text for w in ("tax hike", "raise tax", "revenue act")):
+        return "national_tax_delta", 0.005
+    if any(w in text for w in ("education", "university", "tuition", "school")):
+        return "education_subsidy", 0.10
+    if any(w in text for w in ("transport", "rail", "fare", "port")):
+        return "travel_cost_mult", 0.95
+    if any(w in text for w in ("energy", "power", "grid")):
+        return "energy_grid_fee", 0.5
+    return None, None
+
+
+async def apply_enacted_bill(db: AsyncSession, bill: Bill) -> dict:
+    """Apply real rule changes when a bill becomes law."""
+    from app.services import politics_service, treasury_service
+
+    key = bill.effect_key
+    val = bill.effect_value
+    if not key:
+        key, val = _infer_bill_effect(bill.title, bill.summary)
+        bill.effect_key = key
+        bill.effect_value = val
+    if not key or val is None:
+        return {"applied": False}
+
+    applied: dict = {"effect_key": key, "effect_value": val, "applied": True}
+    if key == "crime_catch_delta":
+        states = (await db.execute(select(State))).scalars().all()
+        for st in states:
+            st.crime_catch_rate = round(
+                min(0.85, max(0.10, float(st.crime_catch_rate) + float(val))), 4
+            )
+        applied["states"] = len(states)
+    elif key == "national_tax_delta":
+        nation = await politics_service.get_or_create_nation(db)
+        settings = get_settings()
+        new_rate = float(nation.national_tax_rate or 0.05) + float(val)
+        new_rate = max(settings.min_national_tax_rate, min(settings.max_national_tax_rate, new_rate))
+        await treasury_service.set_national_tax_rate(db, new_rate)
+        applied["national_tax_rate"] = new_rate
+    elif key == "education_subsidy":
+        # Store as nation note flag; enroll discounts read via get_settings override
+        nation = await politics_service.get_or_create_nation(db)
+        nation.notes = (nation.notes or "") + f"|edu_subsidy={float(val):.3f}"
+        applied["education_subsidy"] = float(val)
+    elif key == "travel_cost_mult":
+        nation = await politics_service.get_or_create_nation(db)
+        nation.notes = (nation.notes or "") + f"|travel_mult={float(val):.3f}"
+        applied["travel_cost_mult"] = float(val)
+    elif key == "energy_grid_fee":
+        from app.models.enterprise import EnterpriseKind, StateEnterprise
+
+        ent = (
+            await db.execute(
+                select(StateEnterprise).where(
+                    StateEnterprise.kind == EnterpriseKind.POWER
+                )
+            )
+        ).scalar_one_or_none()
+        if ent:
+            fee = round(float(val) * 1000, 2)
+            ent.cash_balance = round(float(ent.cash_balance or 0) + fee, 2)
+            ent.lifetime_revenue = round(float(ent.lifetime_revenue or 0) + fee, 2)
+            applied["energy_credit"] = fee
+    await db.flush()
+    return applied
+
+
 async def propose_bill(
-    db: AsyncSession, character: Character, title: str, summary: str
+    db: AsyncSession,
+    character: Character,
+    title: str,
+    summary: str,
+    *,
+    effect_key: str | None = None,
+    effect_value: float | None = None,
 ) -> Bill:
     ensure_can_act(character)
     state = await _require_mp(db, character)
@@ -59,6 +139,9 @@ async def propose_bill(
     npc_count = await _npc_mp_count(db)
     npc_yes = int(npc_count * 0.55) if npc_count else 0
     npc_no = npc_count - npc_yes
+
+    if not effect_key:
+        effect_key, effect_value = _infer_bill_effect(title, summary)
 
     bill = Bill(
         title=title.strip()[:160],
@@ -69,6 +152,8 @@ async def propose_bill(
         npc_yes=npc_yes,
         npc_no=npc_no,
         debate_ends_at=now + timedelta(days=settings.bill_debate_days),
+        effect_key=effect_key,
+        effect_value=effect_value,
     )
     db.add(bill)
     await db.flush()
@@ -119,6 +204,14 @@ async def vote_on_bill(
     else:
         bill.abstain_votes += 1
 
+    session_bonus = 0.0
+    if prior is None:
+        from app.services import office_pay_service
+
+        session_bonus = await office_pay_service.pay_session_bonus(
+            db, character, kind="bill"
+        )
+
     await db.flush()
     return {
         "bill_id": bill.id,
@@ -128,6 +221,7 @@ async def vote_on_bill(
         "abstain_votes": bill.abstain_votes,
         "npc_yes": bill.npc_yes,
         "npc_no": bill.npc_no,
+        "session_bonus": session_bonus,
     }
 
 
@@ -163,10 +257,17 @@ async def resolve_due_bills(db: AsyncSession) -> int:
             else:
                 bill.status = BillStatus.ENACTED
                 bill.enacted_at = now
+                effect = await apply_enacted_bill(db, bill)
+                effect_note = ""
+                if effect.get("applied"):
+                    effect_note = (
+                        f" Effect: {effect.get('effect_key')}="
+                        f"{effect.get('effect_value')}."
+                    )
                 await news_service.publish(
                     db,
                     f"Law enacted: {bill.title}",
-                    bill.summary[:400],
+                    (bill.summary[:360] + effect_note)[:400],
                     category="politics",
                 )
         else:
@@ -255,10 +356,16 @@ async def resolve_due_budgets(db: AsyncSession) -> int:
         total_no = budget.no_votes + (npc - npc_yes)
         if total_yes >= MAJORITY and total_yes > total_no:
             budget.status = BudgetStatus.PASSED
-            from app.services import treasury_service
+            from app.services import office_pay_service, treasury_service
 
             await treasury_service.set_national_tax_rate(
                 db, budget.national_tax_rate
+            )
+            await office_pay_service.pay_budget_passed_bonuses(db, budget.id)
+            from app.services import stock_service
+
+            await stock_service.apply_budget_market_shock(
+                db, tax_rate=budget.national_tax_rate
             )
             await news_service.publish(
                 db,
@@ -343,10 +450,20 @@ async def vote_on_budget(
         budget.yes_votes += 1
     else:
         budget.no_votes += 1
+
+    session_bonus = 0.0
+    if prior is None:
+        from app.services import office_pay_service
+
+        session_bonus = await office_pay_service.pay_session_bonus(
+            db, character, kind="budget"
+        )
+
     await db.flush()
     return {
         "budget_id": budget.id,
         "choice": choice.value,
         "yes_votes": budget.yes_votes,
         "no_votes": budget.no_votes,
+        "session_bonus": session_bonus,
     }

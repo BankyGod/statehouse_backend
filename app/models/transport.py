@@ -1,4 +1,4 @@
-"""Travel carriers — air, rail, bus (gov + private)."""
+"""Travel carriers — government SOE air, rail, and coach only."""
 
 from __future__ import annotations
 

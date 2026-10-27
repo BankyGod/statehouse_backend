@@ -122,3 +122,13 @@ class NationOffice(Base, TimestampMixin):
     treasury_balance: Mapped[float] = mapped_column(Float, default=100_000.0)
     # Active rate from last passed budget reading
     national_tax_rate: Mapped[float] = mapped_column(Float, default=0.05)
+    # Weekly office payroll stamps (player holders only)
+    last_president_salary_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_vp_salary_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_speaker_salary_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -16,6 +16,24 @@ async def get_parliament(db: AsyncSession = Depends(get_db)):
     return await politics_service.parliament(db)
 
 
+@router.get("/office-pay")
+async def office_pay_catalog():
+    from app.services import office_pay_service
+
+    return office_pay_service.office_pay_catalog()
+
+
+@router.get("/office-pay/me")
+async def my_office_pay(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import office_pay_service
+
+    character = await character_service.get_character_for_user(db, user)
+    return await office_pay_service.my_office_pay(db, character)
+
+
 @router.get("/elections/current")
 async def current_election(db: AsyncSession = Depends(get_db)):
     await politics_service.advance_election_phases(db)

@@ -301,6 +301,35 @@ async def my_post(db: AsyncSession, character_id: int) -> dict | None:
     return _post_out(post, "You")
 
 
+async def effective_crime_catch_rate(
+    db: AsyncSession, state: State, base_rate: float
+) -> float:
+    """Player-held justice/customs posts raise local catch pressure."""
+    rate = float(base_rate)
+    result = await db.execute(
+        select(GovernmentPost).where(
+            GovernmentPost.is_npc.is_(False),
+            GovernmentPost.character_id.is_not(None),
+        )
+    )
+    for post in result.scalars().all():
+        agency = (post.agency or "").lower()
+        title = (post.title or "").lower()
+        portfolio = (post.portfolio or "").lower()
+        is_security = any(
+            k in agency or k in title or k in portfolio
+            for k in ("justice", "customs", "border", "police", "interior", "defence")
+        )
+        if not is_security:
+            continue
+        # National posts boost all states slightly; state posts boost home state more
+        if post.state_id is None:
+            rate += 0.015
+        elif post.state_id == state.id:
+            rate += 0.04
+    return min(0.95, max(0.15, rate))
+
+
 async def apply_for_post(
     db: AsyncSession, character: Character, post_id: int
 ) -> dict:

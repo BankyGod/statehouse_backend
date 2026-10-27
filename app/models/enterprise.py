@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import enum
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -14,6 +16,8 @@ from app.models.mixins import TimestampMixin
 class EnterpriseKind(str, enum.Enum):
     PORT = "port"
     RAIL = "rail"
+    AIR = "air"
+    BUS = "bus"
     POWER = "power"
     UNIVERSITY_SYSTEM = "university_system"
 
@@ -39,5 +43,12 @@ class StateEnterprise(Base, TimestampMixin):
     )
     stock_listing_id: Mapped[int | None] = mapped_column(
         ForeignKey("stock_listings.id"), nullable=True
+    )
+    # Operating ledger (travel fares, tuition, grid fees, etc.)
+    cash_balance: Mapped[float] = mapped_column(Float, default=50_000.0)
+    lifetime_revenue: Mapped[float] = mapped_column(Float, default=0.0)
+    lifetime_costs: Mapped[float] = mapped_column(Float, default=0.0)
+    last_ops_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

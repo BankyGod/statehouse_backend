@@ -49,6 +49,9 @@ class BusinessSector(str, enum.Enum):
     REAL_ESTATE = "real_estate"
     # Security
     PRIVATE_SECURITY = "private_security"
+    # Finance & connectivity
+    INSURANCE = "insurance"
+    TELECOM = "telecom"
     # Catch-all
     OTHER = "other"
 
@@ -138,6 +141,16 @@ SECTOR_CATALOG: list[dict] = [
         "value": BusinessSector.PRIVATE_SECURITY,
         "label": "Private security",
         "group": "Security",
+    },
+    {
+        "value": BusinessSector.INSURANCE,
+        "label": "Insurance",
+        "group": "Professional",
+    },
+    {
+        "value": BusinessSector.TELECOM,
+        "label": "Telecom / ISP",
+        "group": "Knowledge",
     },
     {"value": BusinessSector.OTHER, "label": "General / other", "group": "Other"},
 ]

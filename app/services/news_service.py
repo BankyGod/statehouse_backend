@@ -22,6 +22,12 @@ async def publish(
     )
     db.add(item)
     await db.flush()
+    if category in ("economy", "politics"):
+        from app.services import stock_service
+
+        await stock_service.apply_macro_news_shock(
+            db, category=category, headline=headline
+        )
     return item
 
 

@@ -93,6 +93,14 @@ async def hire(
     if listing.requires_clean_record and character.criminal_record_summary:
         raise HTTPException(status_code=400, detail="Clean criminal record required")
 
+    from app.services import office_pay_service
+
+    if await office_pay_service.holds_political_office(db, character):
+        raise HTTPException(
+            status_code=400,
+            detail=office_pay_service.EMPLOYEE_JOB_BLOCKED_BY_OFFICE,
+        )
+
     company = await get_company_employment(db, character.id)
     if company is not None:
         raise HTTPException(
@@ -140,6 +148,25 @@ async def resign_current_job(db: AsyncSession, character: Character) -> bool:
 
 async def work_shift(db: AsyncSession, character: Character) -> dict:
     ensure_can_act(character)
+    from app.services import office_pay_service
+
+    if await office_pay_service.holds_political_office(db, character):
+        cleared = await office_pay_service.end_employee_jobs_for_office(
+            db, character, reason="Holds political office"
+        )
+        if cleared["left_state_job"] or cleared["left_company_jobs"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Political office ended your employee job. "
+                    "Office pay comes from the treasury — you may still own businesses."
+                ),
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=office_pay_service.EMPLOYEE_JOB_BLOCKED_BY_OFFICE,
+        )
+
     # Company staff cannot keep working an old state listing
     if await clear_state_job_if_company_employed(db, character):
         raise HTTPException(
@@ -186,7 +213,24 @@ async def work_shift(db: AsyncSession, character: Character) -> dict:
         if event["effect_key"] == "job_pay_boost":
             wage = round(wage * float(event["effect_value"]), 2)
 
+    from app.models.treasury import TreasuryTxType
     from app.services import treasury_service
+
+    # State wages come from the national treasury (not minted from thin air)
+    funded = await treasury_service.debit(
+        db,
+        wage,
+        TreasuryTxType.SALARY,
+        note=f"State wage — {listing.title}",
+        character_id=character.id,
+        allow_overdraft=False,
+    )
+    if funded <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="National treasury cannot fund this shift right now",
+        )
+    wage = funded
 
     pay = await treasury_service.pay_taxable_income(
         db,

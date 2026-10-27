@@ -17,37 +17,60 @@ from app.services.character_service import ensure_not_jailed
 
 
 async def ensure_carriers_seeded(db: AsyncSession) -> int:
+    """Keep exactly the six government SOE carriers active; retire all others."""
+    from app.models.transport import CarrierOwnership
     from app.seed.transport_data import CARRIERS
+    from app.services import enterprise_service
 
-    result = await db.execute(select(TransportCarrier.id).limit(1))
-    if result.scalar_one_or_none() is not None:
-        return 0
+    await enterprise_service.ensure_enterprises_seeded(db)
 
     enterprises = {
         e.slug: e
         for e in (await db.execute(select(StateEnterprise))).scalars().all()
     }
+    by_slug = {
+        c.slug: c
+        for c in (await db.execute(select(TransportCarrier))).scalars().all()
+    }
+    keep_slugs = {raw["slug"] for raw in CARRIERS}
     created = 0
     for raw in CARRIERS:
-        ent = None
-        if raw.get("enterprise_slug"):
-            ent = enterprises.get(raw["enterprise_slug"])
-        db.add(
-            TransportCarrier(
-                slug=raw["slug"],
-                name=raw["name"],
-                mode=raw["mode"],
-                ownership=raw["ownership"],
-                enterprise_id=ent.id if ent else None,
-                base_fare_mult=raw["base_fare_mult"],
-                time_mult=raw["time_mult"],
-                comfort=raw["comfort"],
-                reliability=raw["reliability"],
-                tagline=raw["tagline"],
-                is_active=True,
+        ent = enterprises.get(raw["enterprise_slug"]) if raw.get("enterprise_slug") else None
+        row = by_slug.get(raw["slug"])
+        if row is None:
+            db.add(
+                TransportCarrier(
+                    slug=raw["slug"],
+                    name=raw["name"],
+                    mode=raw["mode"],
+                    ownership=CarrierOwnership.GOVERNMENT,
+                    enterprise_id=ent.id if ent else None,
+                    base_fare_mult=raw["base_fare_mult"],
+                    time_mult=raw["time_mult"],
+                    comfort=raw["comfort"],
+                    reliability=raw["reliability"],
+                    tagline=raw["tagline"],
+                    is_active=True,
+                )
             )
-        )
-        created += 1
+            created += 1
+        else:
+            row.name = raw["name"]
+            row.mode = raw["mode"]
+            row.ownership = CarrierOwnership.GOVERNMENT
+            row.enterprise_id = ent.id if ent else row.enterprise_id
+            row.base_fare_mult = raw["base_fare_mult"]
+            row.time_mult = raw["time_mult"]
+            row.comfort = raw["comfort"]
+            row.reliability = raw["reliability"]
+            row.tagline = raw["tagline"]
+            row.is_active = True
+
+    # Deactivate private / leftover carriers so travel only offers SOE operators
+    for slug, row in by_slug.items():
+        if slug not in keep_slugs:
+            row.is_active = False
+
     await db.flush()
     return created
 
@@ -112,10 +135,15 @@ async def list_travel_options(
         raise HTTPException(status_code=404, detail="Destination state not found")
 
     has_permit = await _has_travel_permit(db, character, to_state_id)
+    from app.models.transport import CarrierOwnership
+
     carriers = (
         await db.execute(
             select(TransportCarrier)
-            .where(TransportCarrier.is_active.is_(True))
+            .where(
+                TransportCarrier.is_active.is_(True),
+                TransportCarrier.ownership == CarrierOwnership.GOVERNMENT,
+            )
             .order_by(TransportCarrier.mode, TransportCarrier.base_fare_mult)
         )
     ).scalars().all()
@@ -127,13 +155,19 @@ async def list_travel_options(
         )
         disc_mult = _permit_discount_mult(carrier.mode) if has_permit else 1.0
         discounted = round(q["cost"] * disc_mult, 2) if has_permit else None
+        ent_name = None
+        if carrier.enterprise_id:
+            ent = await db.get(StateEnterprise, carrier.enterprise_id)
+            ent_name = ent.name if ent else None
         options.append(
             {
                 "carrier_id": carrier.id,
                 "carrier_slug": carrier.slug,
                 "carrier_name": carrier.name,
                 "mode": carrier.mode.value,
-                "ownership": carrier.ownership.value,
+                "ownership": "government",
+                "enterprise_id": carrier.enterprise_id,
+                "enterprise_name": ent_name,
                 "tagline": carrier.tagline,
                 "comfort": carrier.comfort,
                 "reliability": carrier.reliability,
@@ -156,8 +190,14 @@ async def quote_carrier(
     carrier_id: int,
 ) -> dict:
     await ensure_carriers_seeded(db)
+    from app.models.transport import CarrierOwnership
+
     carrier = await db.get(TransportCarrier, carrier_id)
-    if carrier is None or not carrier.is_active:
+    if (
+        carrier is None
+        or not carrier.is_active
+        or carrier.ownership != CarrierOwnership.GOVERNMENT
+    ):
         raise HTTPException(status_code=404, detail="Carrier not found")
     dest = await db.get(State, to_state_id)
     if dest is None:
@@ -171,11 +211,73 @@ async def quote_carrier(
         "carrier_id": carrier.id,
         "carrier_name": carrier.name,
         "mode": carrier.mode.value,
+        "ownership": "government",
+        "enterprise_id": carrier.enterprise_id,
         "cost": q["cost"],
         "minutes": q["minutes"],
         "discounted_cost": round(q["cost"] * disc_mult, 2) if has_permit else None,
         "permit_applies": has_permit,
     }
+
+
+async def _route_travel_fare(
+    db: AsyncSession,
+    cost: float,
+    *,
+    carrier: TransportCarrier | None,
+    character_id: int | None,
+) -> dict:
+    """Split fare: VAT → treasury; remainder → linked SOE (or infra fee if private)."""
+    from app.models.treasury import TreasuryTxType
+    from app.services import treasury_service
+
+    cost = round(float(cost), 2)
+    if cost <= 0:
+        return {"vat": 0.0, "operator": 0.0, "enterprise_id": None}
+
+    vat = round(cost * 0.05, 2)
+    operator = round(cost - vat, 2)
+    if vat > 0:
+        await treasury_service.credit(
+            db,
+            vat,
+            TreasuryTxType.FEE,
+            note="Travel VAT",
+            character_id=character_id,
+        )
+
+    enterprise_id = None
+    if carrier and carrier.enterprise_id:
+        ent = await db.get(StateEnterprise, carrier.enterprise_id)
+        if ent:
+            ent.cash_balance = round(float(ent.cash_balance or 0) + operator, 2)
+            ent.lifetime_revenue = round(float(ent.lifetime_revenue or 0) + operator, 2)
+            enterprise_id = ent.id
+            operator = 0.0
+    elif carrier and getattr(carrier.ownership, "value", str(carrier.ownership)) == "government":
+        await treasury_service.credit(
+            db,
+            operator,
+            TreasuryTxType.FEE,
+            note=f"Gov carrier fare — {carrier.name}",
+            character_id=character_id,
+        )
+        operator = 0.0
+    else:
+        # Private / independent: infrastructure levy to treasury
+        levy = round(operator * 0.15, 2)
+        if levy > 0:
+            await treasury_service.credit(
+                db,
+                levy,
+                TreasuryTxType.FEE,
+                note="Travel infrastructure levy",
+                character_id=character_id,
+            )
+        operator = round(operator - levy, 2)
+
+    await db.flush()
+    return {"vat": vat, "operator": operator, "enterprise_id": enterprise_id}
 
 
 async def start_travel(
@@ -195,16 +297,27 @@ async def start_travel(
     if dest is None:
         raise HTTPException(status_code=404, detail="Destination state not found")
 
+    from app.models.transport import CarrierOwnership
+
     carrier: TransportCarrier | None = None
     if carrier_id is not None:
         carrier = await db.get(TransportCarrier, carrier_id)
-        if carrier is None or not carrier.is_active:
-            raise HTTPException(status_code=404, detail="Carrier not found")
+        if (
+            carrier is None
+            or not carrier.is_active
+            or carrier.ownership != CarrierOwnership.GOVERNMENT
+        ):
+            raise HTTPException(
+                status_code=404, detail="Government carrier not found"
+            )
     else:
-        # Legacy clients: default to cheapest bus, else cheapest active
+        # Legacy clients: default to cheapest active state carrier
         result = await db.execute(
             select(TransportCarrier)
-            .where(TransportCarrier.is_active.is_(True))
+            .where(
+                TransportCarrier.is_active.is_(True),
+                TransportCarrier.ownership == CarrierOwnership.GOVERNMENT,
+            )
             .order_by(TransportCarrier.base_fare_mult.asc())
             .limit(1)
         )
@@ -229,6 +342,36 @@ async def start_travel(
         if await _has_travel_permit(db, character, to_state_id):
             cost = round(cost * _permit_discount_mult(carrier.mode), 2)
 
+    # Enacted transport bills can lower fares (travel_mult on nation.notes)
+    from app.services import politics_service
+
+    nation = await politics_service.get_or_create_nation(db)
+    notes = nation.notes or ""
+    if "travel_mult=" in notes:
+        try:
+            raw = notes.rsplit("travel_mult=", 1)[-1].split("|")[0]
+            mult = min(1.0, max(0.7, float(raw)))
+            cost = round(cost * mult, 2)
+        except ValueError:
+            pass
+
+    # Private fuel / travel cover from marketplace
+    cond = character.condition or ""
+    if "fuel_until:" in cond:
+        try:
+            from datetime import datetime, timezone
+
+            from app.core.game_time import utcnow as _utcnow
+
+            raw = cond.split("fuel_until:")[-1].split("|")[0]
+            until = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            if until > _utcnow():
+                cost = round(cost * 0.85, 2)
+        except Exception:
+            pass
+
     if character.heat >= 60:
         raise HTTPException(
             status_code=403,
@@ -241,6 +384,7 @@ async def start_travel(
     now = utcnow()
     arrives = now + timedelta(minutes=minutes)
     character.cash -= cost
+    await _route_travel_fare(db, cost, carrier=carrier, character_id=character.id)
     character.is_traveling = True
     character.travel_until = arrives
     character.travel_destination_id = to_state_id

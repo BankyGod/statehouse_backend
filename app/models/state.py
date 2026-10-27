@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Float, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -29,6 +31,9 @@ class State(Base, TimestampMixin):
     # NPC MP placeholder until a player wins
     npc_mp_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     mp_character_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_mp_salary_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     characters: Mapped[list["Character"]] = relationship(  # noqa: F821
         back_populates="home_state",

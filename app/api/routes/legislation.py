@@ -14,6 +14,8 @@ router = APIRouter(prefix="/legislation", tags=["legislation"])
 class ProposeBillRequest(BaseModel):
     title: str = Field(min_length=3, max_length=160)
     summary: str = Field(min_length=10, max_length=2000)
+    effect_key: str | None = Field(default=None, max_length=64)
+    effect_value: float | None = None
 
 
 class VoteChoiceRequest(BaseModel):
@@ -43,6 +45,8 @@ async def bills(
             "debate_ends_at": b.debate_ends_at,
             "vetoed": b.vetoed,
             "enacted_at": b.enacted_at,
+            "effect_key": b.effect_key,
+            "effect_value": b.effect_value,
         }
         for b in items
     ]
@@ -56,13 +60,20 @@ async def propose(
 ):
     character = await character_service.get_character_for_user(db, user)
     bill = await legislation_service.propose_bill(
-        db, character, payload.title, payload.summary
+        db,
+        character,
+        payload.title,
+        payload.summary,
+        effect_key=payload.effect_key,
+        effect_value=payload.effect_value,
     )
     return {
         "id": bill.id,
         "title": bill.title,
         "status": bill.status.value,
         "debate_ends_at": bill.debate_ends_at,
+        "effect_key": bill.effect_key,
+        "effect_value": bill.effect_value,
     }
 
 

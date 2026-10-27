@@ -223,7 +223,8 @@ async def apply_ops_to_stock_price(
         return listing.share_price
 
     old = listing.share_price
-    listing.share_price = round(max(0.5, old * (1.0 + pct)), 4)
+    floor = float(settings.stock_price_floor)
+    listing.share_price = round(max(floor, old * (1.0 + pct)), 4)
     listing.is_booming = profit > 0 and listing.share_price >= old
     reason = "ops_up" if listing.share_price >= old else "ops_down"
     await record_price_point(db, listing, reason=reason)

@@ -356,15 +356,21 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
         if hours >= interval:
             ticks = int(hours // interval)
             sector = biz.sector.value if hasattr(biz.sector, "value") else str(biz.sector)
-            # Real estate earns from actual rents/sales (credited on housing events).
-            # Ops only add a small management fee from staff activity.
+            from app.seed.sector_catalog import sector_mode
+
             staff_rev = _employee_revenue(employees)
+            mode = sector_mode(sector)
+            # Real money comes from player commerce / housing — not formula minting.
+            # Ops only add thin staff activity (management) for listed sectors.
             if sector == BusinessSector.REAL_ESTATE.value:
                 earned = round(ticks * (staff_rev * 0.35), 2)
+            elif mode in ("inventory", "services", "mixed"):
+                # Staff keep the lights on; sales/bookings credit cash on commerce events
+                earned = round(ticks * (staff_rev * 0.15), 2)
             else:
                 earned = round(
                     ticks
-                    * (settings.business_base_revenue_per_interval + staff_rev),
+                    * (settings.business_base_revenue_per_interval * 0.35 + staff_rev * 0.5),
                     2,
                 )
             from app.services import treasury_service
@@ -390,6 +396,7 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
                 label = (
                     "management fees"
                     if sector == BusinessSector.REAL_ESTATE.value
+                    or mode in ("inventory", "services", "mixed")
                     else "earned"
                 )
                 await notify_service.push(
@@ -475,3 +482,23 @@ async def process_business_ops(db: AsyncSession, character: Character) -> dict:
 
     await db.flush()
     return summary
+
+
+async def process_all_active_business_ops(db: AsyncSession) -> dict:
+    """World-tick ops for every active business (not only logged-in owners)."""
+    result = await db.execute(
+        select(Business.owner_id)
+        .where(Business.status == BusinessStatus.ACTIVE)
+        .distinct()
+    )
+    owners = [oid for (oid,) in result.all() if oid]
+    total = {"revenue": 0.0, "wages": 0.0, "owners": 0}
+    for oid in owners:
+        ch = await db.get(Character, oid)
+        if ch is None:
+            continue
+        summary = await process_business_ops(db, ch)
+        total["revenue"] += float(summary.get("revenue") or 0)
+        total["wages"] += float(summary.get("wages") or 0)
+        total["owners"] += 1
+    return total

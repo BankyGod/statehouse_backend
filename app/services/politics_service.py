@@ -131,6 +131,8 @@ async def parliament(db: AsyncSession) -> dict:
             speaker_name = sp.display_name
             speaker_is_npc = False
 
+    from app.services import office_pay_service
+
     return {
         "seats": seats,
         "majority_needed": 11,
@@ -150,6 +152,7 @@ async def parliament(db: AsyncSession) -> dict:
             "character_id": nation.speaker_character_id,
             "is_npc": speaker_is_npc,
         },
+        "office_pay": office_pay_service.office_pay_catalog(),
     }
 
 
@@ -353,10 +356,16 @@ async def resolve_election(db: AsyncSession, election: Election) -> dict:
         ch = await db.get(Character, winner.character_id)
         if ch:
             ch.reputation += 20
+            from app.services import office_pay_service
+
+            await office_pay_service.end_employee_jobs_for_office(
+                db, ch, reason="Elected to Parliament — employee jobs ended"
+            )
         mp_results.append(
             {
                 "state_id": state.id,
                 "winner": ch.display_name if ch else str(winner.character_id),
+                "winner_character_id": winner.character_id,
                 "votes": winner.vote_count,
                 "npc": False,
             }
@@ -381,8 +390,14 @@ async def resolve_election(db: AsyncSession, election: Election) -> dict:
         ch = await db.get(Character, winner.character_id)
         if ch:
             ch.reputation += 50
+            from app.services import office_pay_service
+
+            await office_pay_service.end_employee_jobs_for_office(
+                db, ch, reason="Elected President — employee jobs ended"
+            )
         president_info = {
             "winner": ch.display_name if ch else str(winner.character_id),
+            "winner_character_id": winner.character_id,
             "votes": winner.vote_count,
             "npc": False,
         }
@@ -391,7 +406,17 @@ async def resolve_election(db: AsyncSession, election: Election) -> dict:
 
     election.status = ElectionStatus.CLOSED
     election.resolved_at = utcnow()
-    from app.services import news_service
+    from app.services import news_service, office_pay_service
+
+    await office_pay_service.pay_election_win_bonuses(
+        db,
+        president_character_id=president_info.get("winner_character_id"),
+        mp_character_ids=[
+            r["winner_character_id"]
+            for r in mp_results
+            if not r.get("npc") and r.get("winner_character_id")
+        ],
+    )
 
     await news_service.publish(
         db,

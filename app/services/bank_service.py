@@ -190,6 +190,24 @@ async def take_loan(db: AsyncSession, character: Character, amount: float) -> Lo
     if character.criminal_record_summary:
         raise HTTPException(status_code=403, detail="Loan denied: criminal record")
 
+    from app.models.treasury import TreasuryTxType
+    from app.services import treasury_service
+
+    # National bank capital comes from the treasury
+    funded = await treasury_service.debit(
+        db,
+        amount,
+        TreasuryTxType.TRANSFER,
+        note="Bank loan disbursement",
+        character_id=character.id,
+        allow_overdraft=False,
+    )
+    if funded < amount:
+        raise HTTPException(
+            status_code=400,
+            detail="National treasury cannot fund this loan right now",
+        )
+
     now = utcnow()
     total_due = round(amount * (1 + settings.loan_interest_rate), 2)
     loan = Loan(
@@ -235,11 +253,40 @@ async def repay_loan(
 
     character.bank_balance = round(character.bank_balance - from_bank, 2)
     character.cash = round(character.cash - from_cash, 2)
+    # Interest portion returns to treasury; principal reconstitutes lending capacity
+    interest_share = max(
+        0.0,
+        float(loan.remaining) - float(loan.principal),
+    )
+    # Approximate interest in this payment
+    interest_paid = round(min(pay, interest_share), 2) if interest_share > 0 else 0.0
+    principal_paid = round(pay - interest_paid, 2)
+
     loan.remaining = round(loan.remaining - pay, 2)
     loan.payments_made += 1
     if loan.remaining <= 0.009:
         loan.remaining = 0.0
         loan.status = LoanStatus.PAID
+
+    from app.models.treasury import TreasuryTxType
+    from app.services import treasury_service
+
+    if principal_paid > 0:
+        await treasury_service.credit(
+            db,
+            principal_paid,
+            TreasuryTxType.TRANSFER,
+            note=f"Loan #{loan.id} principal repay",
+            character_id=character.id,
+        )
+    if interest_paid > 0:
+        await treasury_service.credit(
+            db,
+            interest_paid,
+            TreasuryTxType.FEE,
+            note=f"Loan #{loan.id} interest",
+            character_id=character.id,
+        )
 
     await _ledger(
         db, character, BankTxType.LOAN_REPAY, pay, note=f"Loan #{loan.id} repayment"

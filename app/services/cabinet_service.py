@@ -183,6 +183,12 @@ async def appoint(
     seat.last_salary_at = now
     appointee.reputation += 15
 
+    from app.services import office_pay_service
+
+    await office_pay_service.end_employee_jobs_for_office(
+        db, appointee, reason="Appointed minister — employee jobs ended"
+    )
+
     owner = await db.get(User, appointee.user_id)
     login_name = owner.username if owner else username.strip().lower()
 
@@ -279,57 +285,21 @@ async def my_portfolio(db: AsyncSession, character: Character) -> dict | None:
     seat = result.scalar_one_or_none()
     if seat is None:
         return None
+    from app.services import office_pay_service
+
+    pay = office_pay_service.weekly_gross("minister", character)
     return {
         "portfolio": seat.portfolio.value,
         "title": seat.title,
         "appointed_at": seat.appointed_at,
-        "weekly_salary": get_settings().minister_weekly_salary,
+        "weekly_salary": pay["gross"],
+        "pay": pay,
     }
 
 
 async def pay_minister_salaries(db: AsyncSession) -> int:
-    """Weekly cabinet pay for player ministers."""
-    settings = get_settings()
-    now = utcnow()
-    result = await db.execute(
-        select(CabinetSeat).where(
-            CabinetSeat.is_npc.is_(False),
-            CabinetSeat.character_id.is_not(None),
-        )
-    )
-    paid = 0
-    for seat in result.scalars().all():
-        last = seat.last_salary_at or seat.appointed_at or now
-        if last.tzinfo is None:
-            from datetime import timezone
+    """Backward-compatible wrapper — full office payroll lives in office_pay_service."""
+    from app.services import office_pay_service
 
-            last = last.replace(tzinfo=timezone.utc)
-        if now < last + timedelta(days=7):
-            continue
-        ch = await db.get(Character, seat.character_id)
-        if ch is None:
-            continue
-        from app.services import treasury_service
-        from app.models.treasury import TreasuryTxType
-
-        gross = settings.minister_weekly_salary
-        funded = await treasury_service.debit(
-            db,
-            gross,
-            TreasuryTxType.SALARY,
-            note=f"Minister salary — {seat.title}",
-            character_id=ch.id,
-            allow_overdraft=True,
-        )
-        if funded > 0:
-            await treasury_service.pay_taxable_income(
-                db,
-                ch,
-                funded,
-                note=f"Income tax — minister {seat.title}",
-            )
-        seat.last_salary_at = now
-        paid += 1
-    if paid:
-        await db.flush()
-    return paid
+    result = await office_pay_service.pay_all_office_salaries(db)
+    return int(result.get("count") or 0)

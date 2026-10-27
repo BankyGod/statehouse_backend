@@ -65,6 +65,79 @@ def _effective_catch_rate(
     return min(0.92, max(0.15, rate))
 
 
+async def _steal_from_world(
+    db: AsyncSession,
+    thief: Character,
+    state_id: int,
+    desired: float,
+) -> tuple[float, str]:
+    """Take cash from a real victim (NPC/player) or shop in the state — not thin air."""
+    from app.models.business import Business, BusinessStatus
+
+    desired = round(max(0.0, float(desired)), 2)
+    if desired <= 0:
+        return 0.0, ""
+
+    # Prefer a cash-holding person in the same state
+    people = (
+        await db.execute(
+            select(Character)
+            .where(
+                Character.current_state_id == state_id,
+                Character.id != thief.id,
+                Character.cash >= 15,
+                Character.is_jailed.is_(False),
+            )
+            .order_by(Character.cash.desc())
+            .limit(12)
+        )
+    ).scalars().all()
+    if people:
+        victim = random.choice(people[: min(6, len(people))])
+        take = round(min(desired, float(victim.cash) * 0.35, float(victim.cash)), 2)
+        if take > 0:
+            victim.cash = round(float(victim.cash) - take, 2)
+            if not getattr(victim, "is_npc", False):
+                await notify_service.push(
+                    db,
+                    victim.id,
+                    "You were robbed",
+                    body=f"${take:.2f} taken in {thief.display_name}'s crime.",
+                    category="crime",
+                )
+            label = "NPC" if getattr(victim, "is_npc", False) else "citizen"
+            return take, f"Stolen from {label} {victim.display_name}."
+
+    shops = (
+        await db.execute(
+            select(Business)
+            .where(
+                Business.state_id == state_id,
+                Business.status == BusinessStatus.ACTIVE,
+                Business.cash_balance >= 25,
+            )
+            .order_by(Business.cash_balance.desc())
+            .limit(8)
+        )
+    ).scalars().all()
+    if shops:
+        shop = random.choice(shops[: min(4, len(shops))])
+        take = round(min(desired, float(shop.cash_balance) * 0.12), 2)
+        if take > 0:
+            shop.cash_balance = round(float(shop.cash_balance) - take, 2)
+            await notify_service.push(
+                db,
+                shop.owner_id,
+                f"{shop.name} was robbed",
+                body=f"${take:.2f} missing from the till.",
+                category="crime",
+            )
+            return take, f"Stolen from shop {shop.name}."
+
+    # Fallback: street cash only (no victim found) — half payout
+    return round(desired * 0.35, 2), "No rich target nearby — slim street take."
+
+
 async def commit_crime(
     db: AsyncSession, character: Character, crime_type: CrimeType
 ) -> dict:
@@ -90,6 +163,13 @@ async def commit_crime(
     if burglary_boost:
         character.crime_boost_burglary = False
 
+    # Living catch pressure from player-held justice/customs posts
+    from app.services import government_service
+
+    catch_chance = await government_service.effective_crime_catch_rate(
+        db, state, catch_chance
+    )
+
     succeeded = random.random() < 0.72
     caught = random.random() < catch_chance
 
@@ -103,19 +183,32 @@ async def commit_crime(
     heat = float(meta["heat_gain"])
     loot = None
 
+    victim_note = ""
     if succeeded and not caught:
-        payout = float(random.uniform(meta["min_payout"], meta["max_payout"]))
-        payout *= max(0.4, 1.0 - (state.crime_catch_rate * 0.5))
+        payout, victim_note = await _steal_from_world(
+            db,
+            character,
+            state.id,
+            float(random.uniform(meta["min_payout"], meta["max_payout"]))
+            * max(0.4, 1.0 - (state.crime_catch_rate * 0.5)),
+        )
         character.cash += payout
         character.heat += heat
         message = f"Got away with ${payout:.2f}. Heat +{heat:.0f}."
+        if victim_note:
+            message += f" {victim_note}"
         if meta.get("loot_chance") and random.random() < meta["loot_chance"]:
             loot = meta["loot_item"]
             if loot:
                 await inventory_service.grant_loot(db, character.id, loot)
                 message += f" Loot: {loot}."
     elif succeeded and caught:
-        payout = float(random.uniform(meta["min_payout"], meta["max_payout"])) * 0.25
+        payout, victim_note = await _steal_from_world(
+            db,
+            character,
+            state.id,
+            float(random.uniform(meta["min_payout"], meta["max_payout"])) * 0.25,
+        )
         character.cash += payout
         fine = float(meta["fine"])
         jail_hours = int(meta["jail_hours"])
@@ -127,6 +220,8 @@ async def commit_crime(
             f"You scored ${payout:.2f} but security caught you. "
             f"Fine ${fine:.0f}, jail {jail_hours}h."
         )
+        if victim_note:
+            message += f" {victim_note}"
     elif not succeeded and caught:
         fine = float(meta["fine"]) * 0.5
         jail_hours = max(2, int(meta["jail_hours"] * 0.5))

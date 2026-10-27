@@ -178,6 +178,17 @@ async def hire_player(
     if worker.id == owner.id:
         raise HTTPException(status_code=400, detail="Cannot hire yourself")
 
+    from app.services import office_pay_service
+
+    if await office_pay_service.holds_political_office(db, worker):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{worker.display_name} holds political office and cannot join "
+                "a company as an employee (they may still own a business)."
+            ),
+        )
+
     existing = await db.execute(
         select(BusinessEmployee).where(
             BusinessEmployee.character_id == worker.id,
@@ -306,7 +317,7 @@ async def list_outgoing_invites(
 
 
 async def accept_invite(db: AsyncSession, character: Character, invite_id: int) -> dict:
-    from app.services import job_service, notify_service, social_service
+    from app.services import job_service, notify_service, office_pay_service, social_service
 
     ensure_can_act(character)
     invite = await db.get(JobInvite, invite_id)
@@ -314,6 +325,12 @@ async def accept_invite(db: AsyncSession, character: Character, invite_id: int) 
         raise HTTPException(status_code=404, detail="Invite not found")
     if invite.status != JobInviteStatus.PENDING:
         raise HTTPException(status_code=400, detail="Invite is no longer pending")
+
+    if await office_pay_service.holds_political_office(db, character):
+        raise HTTPException(
+            status_code=400,
+            detail=office_pay_service.EMPLOYEE_JOB_BLOCKED_BY_OFFICE,
+        )
 
     business = await db.get(Business, invite.business_id)
     if business is None or business.status != BusinessStatus.ACTIVE:
@@ -460,6 +477,14 @@ async def cancel_invite(
 
 
 async def my_company_job(db: AsyncSession, character: Character) -> dict | None:
+    from app.services import office_pay_service
+
+    if await office_pay_service.holds_political_office(db, character):
+        await office_pay_service.end_employee_jobs_for_office(
+            db, character, reason="Holds political office"
+        )
+        return None
+
     result = await db.execute(
         select(BusinessEmployee).where(
             BusinessEmployee.character_id == character.id,

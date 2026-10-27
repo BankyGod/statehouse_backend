@@ -18,12 +18,15 @@ from app.schemas.life import (
     RealEstateListingCreate,
     RealEstateListingUpdate,
 )
+from pydantic import BaseModel, Field
+
 from app.services import (
     business_service,
     character_service,
     employee_service,
     housing_service,
     performance_service,
+    sector_commerce_service,
 )
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
@@ -61,6 +64,38 @@ async def business_catalog():
 async def property_catalog():
     """Real-estate inventory types (acquisition cost, bonuses, suggested prices)."""
     return housing_service.property_catalog()
+
+
+@router.get("/sector-catalog")
+async def sector_catalog(sector: str = Query(...)):
+    return sector_commerce_service.catalog_for_sector(sector)
+
+
+@router.get("/marketplace")
+async def marketplace(
+    state_id: int | None = Query(default=None),
+    sector: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Public company products & services players can buy/book."""
+    return await sector_commerce_service.marketplace(
+        db, state_id=state_id, sector=sector
+    )
+
+
+class StockQtyRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(default=1, gt=0, le=5000)
+
+
+class StockPriceRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=64)
+    sell_price: float = Field(gt=0)
+    is_listed: bool = True
+
+
+class ServiceBookRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=64)
 
 
 @router.get("/preview")
@@ -119,6 +154,101 @@ async def my_businesses(
     )
     businesses = list(result.scalars().all())
     return [await _to_out(db, b) for b in businesses]
+
+
+@router.get("/{business_id}/commerce")
+async def business_commerce_desk(
+    business_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    business = await db.get(Business, business_id)
+    if business is None or business.owner_id != character.id:
+        raise HTTPException(status_code=404, detail="Business not found")
+    return await sector_commerce_service.desk_summary(db, business)
+
+
+@router.post("/{business_id}/commerce/stock")
+async def commerce_stock(
+    business_id: int,
+    payload: StockQtyRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await sector_commerce_service.restock_or_produce(
+        db, character, business_id, sku=payload.sku, quantity=payload.quantity
+    )
+
+
+@router.post("/{business_id}/commerce/price")
+async def commerce_price(
+    business_id: int,
+    payload: StockPriceRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await sector_commerce_service.set_product_price(
+        db,
+        character,
+        business_id,
+        sku=payload.sku,
+        sell_price=payload.sell_price,
+        is_listed=payload.is_listed,
+    )
+
+
+@router.post("/{business_id}/commerce/buy")
+async def commerce_buy(
+    business_id: int,
+    payload: StockQtyRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await sector_commerce_service.buy_product(
+        db, character, business_id, sku=payload.sku, quantity=payload.quantity
+    )
+
+
+@router.post("/{business_id}/commerce/book")
+async def commerce_book(
+    business_id: int,
+    payload: ServiceBookRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    character = await character_service.get_character_for_user(db, user)
+    return await sector_commerce_service.book_service(
+        db, character, business_id, sku=payload.sku
+    )
+
+
+class WholesaleBuyRequest(BaseModel):
+    seller_business_id: int = Field(gt=0)
+    sku: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(default=1, gt=0, le=500)
+
+
+@router.post("/{business_id}/commerce/wholesale-buy")
+async def commerce_wholesale_buy(
+    business_id: int,
+    payload: WholesaleBuyRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Company cash → buy another firm's listed stock (supply chain)."""
+    character = await character_service.get_character_for_user(db, user)
+    return await sector_commerce_service.company_buy_wholesale(
+        db,
+        character,
+        buyer_business_id=business_id,
+        seller_business_id=payload.seller_business_id,
+        sku=payload.sku,
+        quantity=payload.quantity,
+    )
 
 
 @router.get("/{business_id}/employees", response_model=list[EmployeeOut])

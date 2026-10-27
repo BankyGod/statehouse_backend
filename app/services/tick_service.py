@@ -150,10 +150,14 @@ async def tick_world_if_due(db: AsyncSession) -> None:
     """Heavy shared systems — throttled so /characters/me stays snappy."""
     global _last_world_tick_at
     from app.services import (
-        cabinet_service,
+        business_service,
+        enterprise_service,
         government_service,
         legislation_service,
+        office_pay_service,
         politics_service,
+        sector_commerce_service,
+        stock_service,
     )
 
     now = utcnow()
@@ -166,8 +170,13 @@ async def tick_world_if_due(db: AsyncSession) -> None:
     await politics_service.advance_election_phases(db)
     await legislation_service.resolve_due_bills(db)
     await legislation_service.resolve_due_budgets(db)
-    await cabinet_service.pay_minister_salaries(db)
+    await office_pay_service.pay_all_office_salaries(db)
     await government_service.pay_gov_salaries(db)
+    await enterprise_service.tick_enterprise_operations(db)
+    await stock_service.tick_enterprise_fundamentals(db)
+    # All active businesses (not only public / logged-in owners)
+    await business_service.process_all_active_business_ops(db)
+    await sector_commerce_service.process_npc_marketplace_demand(db)
 
 
 async def tick_character(db: AsyncSession, character: Character) -> Character:
@@ -211,10 +220,11 @@ async def tick_character(db: AsyncSession, character: Character) -> Character:
     await education_service.complete_due_education(db, character)
     await business_service.activate_due_businesses(db, character)
     await business_service.process_business_ops(db, character)
-    from app.services import job_service
+    from app.services import job_service, sector_commerce_service
 
     await job_service.clear_state_job_if_company_employed(db, character)
     await housing_service.process_rent(db, character)
+    await sector_commerce_service.charge_weekly_energy_bill(db, character)
     await tick_world_if_due(db)
     await bank_service.apply_savings_interest(db, character)
     await db.flush()

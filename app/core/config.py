@@ -59,8 +59,10 @@ class Settings(BaseSettings):
     stock_ipo_min_employees: int = 2
     stock_ipo_min_performance_score: float = 55.0
     stock_trade_fee_rate: float = 0.01  # 1% brokerage on secondary trades
-    stock_price_impact: float = 0.002  # price moves slightly per trade volume
-    stock_ops_price_sensitivity: float = 0.04  # max ~4% move from one ops tick
+    stock_price_impact: float = 0.0015  # volume impact (scaled further by float scarcity)
+    stock_ops_price_sensitivity: float = 0.04  # max ~4% move from one ops/fund tick
+    stock_price_floor: float = 0.25  # young market can trade cheap
+    stock_boom_impact_mult: float = 1.2  # dampened vs old 1.5
 
     # Health
     health_regen_minutes: int = 10  # +1 HP when not hospitalized/sick
@@ -80,7 +82,33 @@ class Settings(BaseSettings):
     budget_debate_days: float = 3.0
     budget_interval_days: float = 45.0  # ~6.5 weeks
     cabinet_require_mp: bool = True
-    minister_weekly_salary: float = 400.0
+    # Office pay (weekly from treasury). Totals = base + duty + housing.
+    # Kept as components so UI can show the breakdown.
+    president_weekly_salary: float = 900.0
+    president_duty_allowance: float = 200.0
+    president_housing_allowance: float = 150.0
+    vp_weekly_salary: float = 700.0
+    vp_duty_allowance: float = 150.0
+    vp_housing_allowance: float = 100.0
+    speaker_weekly_salary: float = 550.0
+    speaker_duty_allowance: float = 100.0
+    speaker_housing_allowance: float = 50.0
+    minister_weekly_salary: float = 450.0  # base (was flat 400)
+    minister_duty_allowance: float = 80.0
+    minister_housing_allowance: float = 40.0
+    mp_weekly_salary: float = 320.0
+    mp_duty_allowance: float = 60.0
+    mp_housing_allowance: float = 30.0
+    # Bonuses / penalties
+    office_session_bonus_mp: float = 40.0
+    office_session_bonus_minister: float = 50.0
+    office_budget_bonus_president: float = 200.0
+    office_budget_bonus_finance: float = 150.0
+    office_budget_bonus_mp_yes: float = 25.0
+    office_election_bonus_president: float = 500.0
+    office_election_bonus_mp: float = 150.0
+    office_scandal_heat_threshold: float = 40.0
+    office_scandal_pay_factor: float = 0.75  # −25% when scandal
     # Tax / treasury (keep moderate — felt but not crushing)
     default_national_tax_rate: float = 0.05
     corporate_tax_multiplier: float = 0.70  # corp rate = national * this (~3.5%)

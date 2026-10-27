@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.game_time import utcnow
@@ -15,10 +15,51 @@ from app.models.education import (
     EducationTrack,
     EnrollmentStatus,
 )
-from app.models.enterprise import StateEnterprise
+from app.models.enterprise import EnterpriseKind, StateEnterprise
 from app.models.state import State
 from app.schemas.life import EnrollmentOut
 from app.services.character_service import ensure_can_act
+
+
+async def _route_tuition(
+    db: AsyncSession, amount: float, *, character_id: int | None
+) -> None:
+    """Tuition → UANUS ledger (80%) + treasury education levy (20%)."""
+    from app.models.treasury import TreasuryTxType
+    from app.services import treasury_service
+
+    amount = round(float(amount), 2)
+    if amount <= 0:
+        return
+    levy = round(amount * 0.20, 2)
+    to_uni = round(amount - levy, 2)
+    if levy > 0:
+        await treasury_service.credit(
+            db,
+            levy,
+            TreasuryTxType.FEE,
+            note="Education levy",
+            character_id=character_id,
+        )
+    ent = (
+        await db.execute(
+            select(StateEnterprise).where(
+                StateEnterprise.kind == EnterpriseKind.UNIVERSITY_SYSTEM
+            )
+        )
+    ).scalar_one_or_none()
+    if ent and to_uni > 0:
+        ent.cash_balance = round(float(ent.cash_balance or 0) + to_uni, 2)
+        ent.lifetime_revenue = round(float(ent.lifetime_revenue or 0) + to_uni, 2)
+    elif to_uni > 0:
+        await treasury_service.credit(
+            db,
+            to_uni,
+            TreasuryTxType.FEE,
+            note="Tuition (no UANUS row — treasury hold)",
+            character_id=character_id,
+        )
+    await db.flush()
 
 
 def _enum_str(value: object | None) -> str | None:
@@ -282,12 +323,40 @@ async def enroll_in_program(
             ),
         )
 
-    if character.cash < program.cost:
+    # Seat capacity — real institution constraint
+    enrolled_count = await db.execute(
+        select(func.count())
+        .select_from(EducationEnrollment)
+        .where(
+            EducationEnrollment.program_id == program.id,
+            EducationEnrollment.status == EnrollmentStatus.ENROLLED,
+        )
+    )
+    seats_taken = int(enrolled_count.scalar_one() or 0)
+    if program.capacity and seats_taken >= int(program.capacity):
+        raise HTTPException(status_code=400, detail="Program is at capacity")
+
+    tuition = float(program.cost)
+    # Active education subsidy from enacted bills (stored on nation.notes)
+    from app.services import politics_service
+
+    nation = await politics_service.get_or_create_nation(db)
+    notes = nation.notes or ""
+    if "edu_subsidy=" in notes:
+        try:
+            raw = notes.rsplit("edu_subsidy=", 1)[-1].split("|")[0]
+            subsidy = min(0.5, max(0.0, float(raw)))
+            tuition = round(tuition * (1.0 - subsidy), 2)
+        except ValueError:
+            pass
+
+    if character.cash < tuition:
         raise HTTPException(status_code=400, detail="Insufficient funds")
 
     now = utcnow()
     completes = now + timedelta(days=program.real_days)
-    character.cash -= program.cost
+    character.cash -= tuition
+    await _route_tuition(db, tuition, character_id=character.id)
 
     activity = Activity(
         character_id=character.id,
@@ -297,7 +366,7 @@ async def enroll_in_program(
         description=f"Studying {program.title} at {institution.name}",
         age_gain_years=program.age_years,
         energy_cost=0,
-        cash_delta=-program.cost,
+        cash_delta=-tuition,
         started_at=now,
         completes_at=completes,
         ref_type="education_program",
@@ -317,7 +386,7 @@ async def enroll_in_program(
         program_id=program.id,
         status=EnrollmentStatus.ENROLLED,
         title=f"{program.title} — {institution.name}",
-        cost_paid=program.cost,
+        cost_paid=tuition,
         age_gain_years=program.age_years,
         education_level=program.level,
         started_at=now,
@@ -374,6 +443,7 @@ async def _enroll_catalog_only(
     now = utcnow()
     completes = now + timedelta(days=meta["real_days"])
     character.cash -= meta["cost"]
+    await _route_tuition(db, float(meta["cost"]), character_id=character.id)
 
     activity = Activity(
         character_id=character.id,

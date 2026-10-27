@@ -50,6 +50,38 @@ BUSINESS_COLUMNS = {
     "entity_type": "VARCHAR(32) DEFAULT 'sole_trader'",
 }
 
+STOCK_LISTING_COLUMNS_SQLITE = {
+    "enterprise_id": "INTEGER",
+}
+
+STOCK_LISTING_COLUMNS_PG = {
+    "enterprise_id": "INTEGER",
+}
+
+STATE_ENTERPRISE_COLUMNS_SQLITE = {
+    "cash_balance": "FLOAT DEFAULT 50000",
+    "lifetime_revenue": "FLOAT DEFAULT 0",
+    "lifetime_costs": "FLOAT DEFAULT 0",
+    "last_ops_at": "DATETIME",
+}
+
+STATE_ENTERPRISE_COLUMNS_PG = {
+    "cash_balance": "DOUBLE PRECISION DEFAULT 50000",
+    "lifetime_revenue": "DOUBLE PRECISION DEFAULT 0",
+    "lifetime_costs": "DOUBLE PRECISION DEFAULT 0",
+    "last_ops_at": "TIMESTAMP WITH TIME ZONE",
+}
+
+BILL_EFFECT_COLUMNS_SQLITE = {
+    "effect_key": "VARCHAR(64)",
+    "effect_value": "FLOAT",
+}
+
+BILL_EFFECT_COLUMNS_PG = {
+    "effect_key": "VARCHAR(64)",
+    "effect_value": "DOUBLE PRECISION",
+}
+
 
 NATION_OFFICE_COLUMNS_SQLITE = {
     "vice_president_character_id": "INTEGER",
@@ -57,6 +89,9 @@ NATION_OFFICE_COLUMNS_SQLITE = {
     "speaker_npc_name": "VARCHAR(128) DEFAULT 'Speaker Ruth Mensah (NPC)'",
     "treasury_balance": "FLOAT DEFAULT 100000",
     "national_tax_rate": "FLOAT DEFAULT 0.05",
+    "last_president_salary_at": "DATETIME",
+    "last_vp_salary_at": "DATETIME",
+    "last_speaker_salary_at": "DATETIME",
 }
 
 NATION_OFFICE_COLUMNS_PG = {
@@ -65,6 +100,17 @@ NATION_OFFICE_COLUMNS_PG = {
     "speaker_npc_name": "VARCHAR(128)",
     "treasury_balance": "DOUBLE PRECISION DEFAULT 100000",
     "national_tax_rate": "DOUBLE PRECISION DEFAULT 0.05",
+    "last_president_salary_at": "TIMESTAMP WITH TIME ZONE",
+    "last_vp_salary_at": "TIMESTAMP WITH TIME ZONE",
+    "last_speaker_salary_at": "TIMESTAMP WITH TIME ZONE",
+}
+
+STATE_MP_SALARY_COLUMNS = {
+    "last_mp_salary_at": "TIMESTAMP WITH TIME ZONE",
+}
+
+STATE_MP_SALARY_COLUMNS_SQLITE = {
+    "last_mp_salary_at": "DATETIME",
 }
 
 EDUCATION_ENROLLMENT_COLUMNS = {
@@ -177,6 +223,10 @@ async def ensure_sqlite_columns(conn: AsyncConnection) -> None:
             "subject": "VARCHAR(128)",
         },
     )
+    await _add_missing_sqlite(conn, "states", STATE_MP_SALARY_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "stock_listings", STOCK_LISTING_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "state_enterprises", STATE_ENTERPRISE_COLUMNS_SQLITE)
+    await _add_missing_sqlite(conn, "bills", BILL_EFFECT_COLUMNS_SQLITE)
 
 
 async def ensure_postgres_columns(conn: AsyncConnection) -> None:
@@ -213,6 +263,30 @@ async def ensure_postgres_columns(conn: AsyncConnection) -> None:
             "subject": "VARCHAR(128)",
         },
     )
+    await _add_missing_pg(conn, "states", STATE_MP_SALARY_COLUMNS)
+    await _add_missing_pg(conn, "stock_listings", STOCK_LISTING_COLUMNS_PG)
+    await _add_missing_pg(conn, "state_enterprises", STATE_ENTERPRISE_COLUMNS_PG)
+    await _add_missing_pg(conn, "bills", BILL_EFFECT_COLUMNS_PG)
+    # Postgres native enums use member *names* (PORT, RAIL, …)
+    for value in ("AIR", "BUS"):
+        exists = (
+            await conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_enum e
+                    JOIN pg_type t ON t.oid = e.enumtypid
+                    WHERE t.typname = 'enterprisekind' AND e.enumlabel = :label
+                    """
+                ),
+                {"label": value},
+            )
+        ).first()
+        if exists:
+            continue
+        await conn.execute(
+            text(f"ALTER TYPE enterprisekind ADD VALUE '{value}'")
+        )
     # Backfill NPC office defaults if null
     await conn.execute(
         text(

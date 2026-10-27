@@ -62,6 +62,9 @@ class Bill(Base, TimestampMixin):
     enacted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Optional living-world effect applied on enactment
+    effect_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    effect_value: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class BillVote(Base, TimestampMixin):

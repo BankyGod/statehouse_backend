@@ -46,6 +46,10 @@ class StockListing(Base, TimestampMixin):
     business_id: Mapped[int | None] = mapped_column(
         ForeignKey("businesses.id"), nullable=True, unique=True
     )
+    # Government SOE listings must point at a real StateEnterprise
+    enterprise_id: Mapped[int | None] = mapped_column(
+        ForeignKey("state_enterprises.id"), nullable=True, unique=True
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[StockListingStatus] = mapped_column(
         Enum(StockListingStatus), default=StockListingStatus.ACTIVE

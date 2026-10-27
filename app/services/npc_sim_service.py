@@ -438,6 +438,8 @@ async def run_npc_sim_batch(db: AsyncSession) -> dict:
             health_service,
         )
 
+        from app.services import bank_service, housing_service
+
         await health_service.discharge_if_due(character)
         tick_service.apply_energy_regen(character)
         crime_service.apply_nerve_regen(character)
@@ -445,6 +447,8 @@ async def run_npc_sim_batch(db: AsyncSession) -> dict:
         health_service.apply_health_regen(character)
         await tick_service.complete_due_travel(db, character)
         await education_service.complete_due_education(db, character)
+        await housing_service.process_rent(db, character)
+        await bank_service.apply_savings_interest(db, character)
 
         if character.is_traveling or character.is_jailed or character.is_hospitalized:
             character.npc_next_action_at = now + timedelta(

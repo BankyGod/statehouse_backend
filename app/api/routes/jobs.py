@@ -39,8 +39,15 @@ async def my_job(
     db: AsyncSession = Depends(get_db),
 ):
     character = await character_service.get_character_for_user(db, user)
-    # Heal dual employment: company roster wins, leftover state job is closed
-    await job_service.clear_state_job_if_company_employed(db, character)
+    from app.services import office_pay_service
+
+    # Political office ends employee roles; company payroll ends leftover state jobs
+    if await office_pay_service.holds_political_office(db, character):
+        await office_pay_service.end_employee_jobs_for_office(
+            db, character, reason="Holds political office"
+        )
+    else:
+        await job_service.clear_state_job_if_company_employed(db, character)
     result = await db.execute(
         select(Job).where(Job.character_id == character.id, Job.is_active.is_(True))
     )
